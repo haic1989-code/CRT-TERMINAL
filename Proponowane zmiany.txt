@@ -1,0 +1,53 @@
+CRT TERMINAL — PROPONOWANE ZMIANY I POMYSŁY
+
+Ten plik służy do zbierania pomysłów na rozwój terminalu.
+Wpis jest propozycją, a nie potwierdzeniem wdrożenia.
+Statusy: POMYSŁ / ZAAKCEPTOWANE / W REALIZACJI / WDROŻONE / ODRZUCONE.
+
+======================================================================
+001. DYNAMIKA PRAWEGO PANELU
+Data dodania: 2026-10-03
+Status: POMYSŁ
+
+Cel: ożywić panel w stylu Matrix CRT, zachowując czytelność i zgodność
+wyświetlanych informacji z rzeczywistymi danymi MT5.
+
+1. Paski kontekstu rynkowego
+   Poświata płynąca po segmentach co 1,5–2 sekundy.
+   Każdy interwał ma osobną fazę animacji, aby paski nie pulsowały razem.
+   Ruch zmienia jasność segmentów; kierunek pozostaje czytelny.
+   Obecne paski pokazują kierunek, a nie liczbową siłę trendu.
+   Zmienna długość wymaga osobnej, ustalonej miary siły trendu.
+
+2. Impulsy aktualizacji danych
+   Krótki błysk odpowiedniego wiersza po rzeczywistej zmianie danych MT5.
+   Impuls powinien być delikatny i nie utrudniać odczytu tekstu.
+
+3. Zmiana kierunku rynku
+   Płynne przejście koloru zielony/różowy przez około 300 ms,
+   gdy rzeczywisty kierunek zmieni się pomiędzy wzrostowym a spadkowym.
+
+4. Stan połączenia
+   Subtelnie pulsująca kontrolka aktywnego połączenia.
+   Zatrzymanie ruchu pasków przy nieaktualnych danych lub utracie
+   połączenia oraz czytelne oznaczenie tego stanu.
+
+5. Planer transakcji
+   Animowane przesunięcie wypełnienia po zmianie wielkości pozycji.
+   Animacja przedstawia zmianę wybranego lota, bez zmiany obliczeń.
+
+Zalecana kolejność: najpierw poświata pasków i impulsy aktualizacji,
+następnie przejścia kolorów, kontrolka połączenia i animacja planera.
+Animacje powinny respektować przełącznik efektów oraz systemowe
+ograniczenie ruchu.
+
+======================================================================
+SZABLON KOLEJNEGO POMYSŁU
+
+Numer i nazwa:
+Data dodania:
+Status: POMYSŁ
+Cel:
+Opis:
+Uwagi / warunki:
+
