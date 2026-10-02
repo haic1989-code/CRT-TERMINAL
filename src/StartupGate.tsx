@@ -3,12 +3,12 @@ import { readMt5BridgeReadiness } from './bridgeStartup'
 import './startup-gate.css'
 
 const SESSION_KEY = 'smartflow-x:startup-ready:v1'
-const WARP_DURATION_MS = 1400
+const WARP_DURATION_MS = 7000
 const WARP_RAYS = Array.from({ length: 84 }, (_, index) => ({
   '--ray-angle': `${index * 137.508}deg`,
-  '--ray-delay': `${(index % 9) * 22}ms`,
+  '--ray-delay': `${-(index % 19) * 73}ms`,
   '--ray-distance': `${3 + (index * 7 % 13)}vmin`,
-  '--ray-length': `${18 + (index * 11 % 32)}vmax`,
+  '--ray-length': `${55 + (index * 11 % 46)}vmax`,
 } as CSSProperties))
 const STATUS_LINES = [
   { label: 'SILNIK WYKRESU', value: 'GOTOWY' },
@@ -116,7 +116,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     <div className="startup-app-content" inert={visible || undefined}>
       {children}
     </div>
-    {visible && <div className={`sf-startup-overlay${closing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="startup-title">
+    {visible && <div className={`sf-startup-overlay${closing ? ' is-closing' : ''}`} style={{ '--warp-duration': `${WARP_DURATION_MS}ms` } as CSSProperties} role="dialog" aria-modal="true" aria-labelledby="startup-title">
       {closing && <div className="sf-startup-warp" aria-hidden="true">
         {WARP_RAYS.map((style, index) => <span key={index} className="sf-startup-warp-ray" style={style}><i>{index % 2 ? '01' : '10'}</i></span>)}
       </div>}
