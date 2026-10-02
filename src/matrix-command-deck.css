@@ -22,6 +22,15 @@
 .sf-matrix .matrix-command-deck h3 .idx{color:var(--dim);margin-right:12px}
 .sf-matrix .matrix-command-deck .pair-grid{display:grid;grid-template-columns:1fr 1fr;column-gap:34px;row-gap:3px}
 .sf-matrix .matrix-command-deck .item{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;white-space:nowrap}
+.sf-matrix .matrix-command-deck .context-item{gap:8px}
+.sf-matrix .matrix-command-deck .direction-bar{display:inline-flex;flex:0 1 52px;min-width:28px;height:7px;gap:2px;align-items:stretch}
+.sf-matrix .matrix-command-deck .direction-bar i{flex:1;background:currentColor;opacity:.16}
+.sf-matrix .matrix-command-deck .direction-bullish i,.sf-matrix .matrix-command-deck .direction-bearish i{opacity:.9}
+.sf-matrix .matrix-command-deck .direction-neutral i:nth-child(2),.sf-matrix .matrix-command-deck .direction-neutral i:nth-child(3),.sf-matrix .matrix-command-deck .direction-neutral i:nth-child(4){opacity:.58}
+.sf-matrix .matrix-command-deck .direction-bullish{color:var(--green)}
+.sf-matrix .matrix-command-deck .direction-bearish{color:var(--red)}
+.sf-matrix .matrix-command-deck .direction-neutral{color:var(--amber)}
+.sf-matrix .matrix-command-deck .direction-unavailable{color:var(--dim)}
 .sf-matrix .matrix-command-deck .dim{color:var(--dim)}
 .sf-matrix .matrix-command-deck .positive{color:var(--green)}
 .sf-matrix .matrix-command-deck .negative{color:var(--red)}

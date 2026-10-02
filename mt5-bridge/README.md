@@ -32,8 +32,9 @@ Bridge **nie posiada endpointu składania zleceń**.
 
 1. Uruchom MetaTrader 5 i zaloguj się na konto brokerskie.
 2. Upewnij się, że historia XAUUSD jest dostępna w terminalu.
-3. Uruchom PowerShell w tym katalogu.
-4. Wykonaj:
+3. Zainstaluj CPython 3.13 x64. CRT Terminal dołącza przypięte pakiety mostu jako lokalny zestaw wheelhouse; instalacja nie pobiera ich ponownie przy kolejnych uruchomieniach.
+4. Uruchom PowerShell w tym katalogu.
+5. Wykonaj:
 
    `powershell -ExecutionPolicy Bypass -File .\start.ps1`
 

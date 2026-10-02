@@ -29,6 +29,7 @@
 .sf-startup-status span { color:#65d8d1; }.sf-startup-status b { color:#96b0bd; font-weight:400; }.sf-startup-status i { color:#72f0ca; font-style:normal; text-align:right; text-shadow:0 0 8px #49efbf88; animation:sf-startup-status-glow 1.4s ease-in-out infinite alternate; }
 .sf-startup-status--1 i { color:#79dfff; }.sf-startup-status--2 i { color:#ffd173; }
 .sf-startup-wait { margin:18px 0 0; color:#ffd173; letter-spacing:.12em; animation:sf-startup-wait-pulse 850ms steps(2,end) infinite; }
+.sf-startup-diagnostic { max-height:96px; margin:5px 0 0; overflow:auto; color:#a5c1c9; font-size:10px; line-height:1.4; overflow-wrap:anywhere; }
 .sf-startup-ready { position:relative; display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-height:40px; margin-top:18px; padding:0; border:0; background:transparent; color:#7df4b0; font:700 11px/1 "Cascadia Code",Consolas,monospace; letter-spacing:.08em; cursor:pointer; animation:sf-startup-ready-blink 1.2s steps(2,end) infinite; text-shadow:0 0 9px #69f6ae55; }
 .sf-startup-ready:hover:not(:disabled) { color:#d8ffe9; text-shadow:0 0 16px #85ffc6; }
 .sf-startup-ready:focus-visible { outline:0; color:#fff0bd; text-shadow:0 0 14px #ffd173; }.sf-startup-ready:disabled { cursor:wait; }

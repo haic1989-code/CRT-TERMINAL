@@ -8,6 +8,20 @@ use tauri::{path::BaseDirectory, Manager};
 
 struct BridgeBootstrap(Mutex<Option<Child>>);
 
+#[tauri::command]
+fn read_bridge_startup_status(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let status_path = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Nie można wyznaczyć katalogu danych mostu: {error}"))?
+        .join("bridge-startup.json");
+    match std::fs::read_to_string(status_path) {
+        Ok(status) => Ok(Some(status)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Nie można odczytać statusu mostu: {error}")),
+    }
+}
+
 fn bridge_is_listening() -> bool {
     let address = SocketAddr::from(([127, 0, 0, 1], 8765));
     TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
@@ -89,6 +103,7 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<Option<Child>, String> {
 
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![read_bridge_startup_status])
         .setup(|app| {
             let child = start_bridge(app.handle()).map_err(std::io::Error::other)?;
             app.manage(BridgeBootstrap(Mutex::new(child)));

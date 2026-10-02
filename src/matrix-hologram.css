@@ -27,48 +27,63 @@
 .sf-matrix .crt-level-list button {padding:5px 7px; color:#b9ffdb; background:#133b29; border:1px solid #4a8f69; font:10px Consolas,monospace; cursor:pointer;}
 .sf-matrix .crt-level-list :is(input,button):focus-visible {outline:2px solid #d7ffe9; outline-offset:3px;}
 
-/* The isolated original art glides across the chart as a CRT hologram. */
+/* Full-chart static background artwork; the market chart stays on the foreground layer. */
 .sf-matrix .sf-chart-box .matrix-agent-art {
-  position:absolute; top:0; bottom:0; left:-4%; z-index:0;
-  width:clamp(260px,36vw,560px); max-width:40%; height:100%;
-  opacity:.27; pointer-events:none;
-  mask-image:linear-gradient(90deg,transparent 0%,#000 18%,#000 82%,transparent 100%);
-  animation:matrix-agent-crossing 72s ease-in-out infinite;
-  will-change:left,top,transform;
+  position:absolute; inset:0; z-index:0; width:100%; max-width:none; height:100%;
+  opacity:.5; pointer-events:none; mask-image:none; animation:none; transform:none; translate:none; will-change:auto;
 }
 .sf-matrix .matrix-agent-art img {
-  object-position:center; object-fit:contain;
-  filter:grayscale(1) sepia(1) hue-rotate(90deg) saturate(1.4) contrast(1.35) brightness(.8);
-  mix-blend-mode:screen;
-  mask-image:linear-gradient(180deg,transparent 0%,#000 12%,#000 80%,transparent 100%);
+  position:absolute; inset:0; width:100%; height:100%; object-position:center; object-fit:cover;
+  filter:saturate(.88) brightness(.86) contrast(1.04);
 }
-.sf-matrix .matrix-agent-art::after {
-  display:block; content:""; position:absolute; inset:0; z-index:2; pointer-events:none;
-  background:repeating-linear-gradient(180deg,transparent 0 2px,#001c1099 2px 3px),repeating-linear-gradient(90deg,transparent 0 55px,#95ffd30b 55px 56px);
-}
-.sf-matrix .matrix-hologram-sweep {
-  position:absolute; top:-25%; left:0; width:100%; height:22%; z-index:3;
-  background:linear-gradient(180deg,transparent,#7effce24 75%,#b7ffe85c 98%,transparent);
-  mix-blend-mode:screen; animation:matrix-hologram-scan 14s linear infinite;
-  pointer-events:none;
-}
-.sf-matrix .matrix-hologram-grid {
-  position:absolute; inset:65% 0 0; z-index:0; pointer-events:none; opacity:.23;
-  background:repeating-linear-gradient(90deg,transparent 0 79px,#63e3a726 79px 80px),repeating-linear-gradient(0deg,transparent 0 39px,#63e3a726 39px 40px);
-  mask-image:linear-gradient(0deg,#000,transparent);
-  transform:perspective(450px) rotateX(50deg) scale(1.5); transform-origin:bottom;
-}
-@keyframes matrix-agent-crossing {
-  0% {left:-4%;top:2%;transform:scale(.94) rotate(-1deg);}
-  24% {left:17%;top:0%;transform:scale(.99) rotate(.5deg);}
-  52% {left:53%;top:3%;transform:scale(1.02) rotate(1deg);}
-  77% {left:24%;top:-1%;transform:scale(.97) rotate(-.5deg);}
-  100% {left:-4%;top:2%;transform:scale(.94) rotate(-1deg);}
-}
-@keyframes matrix-hologram-scan {to {transform:translateY(650%);}}
-.sf-matrix.dragon-motion-paused :is(.matrix-agent-art,.matrix-hologram-sweep,.crt-console-cursor) {animation-play-state:paused;}
-@media(prefers-reduced-motion:reduce) {.matrix-agent-art,.matrix-hologram-sweep,.crt-console-cursor {animation:none!important;left:-4%;top:0;}}
+.sf-matrix.dragon-motion-paused :is(.crt-console-cursor,.crt-phosphor-pulse,.crt-phosphor-pulse::before,.crt-phosphor-pulse i,.crt-range-scan-beam,.crt-range-scan.is-detected,.crt-agent-period-line,.crt-agent-period-form input) {animation-play-state:paused;}
+@media(prefers-reduced-motion:reduce) {.crt-console-cursor {animation:none!important;}}
 @media(max-width:700px) {
   .sf-matrix .crt-chart-console {right:52px; top:10px; width:min(320px,calc(100% - 64px)); font-size:10px;}
-  .sf-matrix .sf-chart-box .matrix-agent-art {width:40%; opacity:.3;}
+}
+
+/* No pointer parallax: chart, artwork and command panel remain stationary. */
+.sf-matrix .sf-chart-box .matrix-agent-art,.sf-matrix .sf-right-column { translate:none; transform:none; transition:none; }
+
+/* A demo tick paints a fading phosphor trace at the latest visible candle. */
+.sf-matrix .crt-phosphor-pulse { position:absolute; z-index:12; width:1px; height:1px; pointer-events:none; transform:translate(-50%,-50%); animation:crt-phosphor-decay 1.65s ease-out forwards; }
+.sf-matrix .crt-phosphor-pulse::before { content:""; position:absolute; width:30px; height:2px; left:-31px; top:-1px; background:linear-gradient(90deg,transparent,#7cffae,#e2ffe9); box-shadow:0 0 8px #8affb4; transform-origin:right; animation:crt-phosphor-trail 1.65s ease-out forwards; }
+.sf-matrix .crt-phosphor-pulse i { position:absolute; width:20px; height:20px; left:-10px; top:-10px; border:1px solid #c9ffda; border-radius:50%; box-shadow:0 0 8px #86ffad,0 0 21px #48ff8b; animation:crt-phosphor-ring 1.65s ease-out forwards; }
+.sf-matrix .crt-phosphor-pulse b { position:absolute; width:5px; height:5px; left:-2px; top:-2px; border-radius:50%; background:#edfff1; box-shadow:0 0 10px 4px #69ff9b; }
+@keyframes crt-phosphor-decay { 0%{opacity:1} 35%{opacity:.9} 100%{opacity:0} }
+@keyframes crt-phosphor-trail { 0%{transform:scaleX(.35);opacity:.95} 100%{transform:scaleX(1);opacity:0} }
+@keyframes crt-phosphor-ring { 0%{transform:scale(.35);opacity:1} 100%{transform:scale(2.2);opacity:0} }
+
+/* The scanner is a visual demo over the current chart viewport; it does not change market data. */
+.sf-matrix .crt-range-scan { position:absolute; z-index:9; inset:13% 7% 14% 2%; border:1px solid #56ff9a55; pointer-events:none; overflow:hidden; box-shadow:inset 0 0 22px #2dff7520; }
+.sf-matrix .crt-range-scan-beam { position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,#a8ffbd,#ecfff0,transparent); box-shadow:0 0 12px 3px #66ff9c80; animation:crt-range-sweep 1.2s linear forwards; }
+.sf-matrix .crt-range-scan.is-detected { border-color:#c6ffd4; box-shadow:inset 0 0 34px #4eff7535,0 0 20px #64ff9a65; animation:crt-range-detected .5s ease-in-out 3; }
+.sf-matrix .crt-range-scan.is-detected::after { content:"Wybicie wykryte"; position:absolute; top:6px; right:8px; padding:3px 6px; color:#d8ffe2; background:#031409d9; border:1px solid #91ffad; font:10px/1.2 Consolas,monospace; letter-spacing:.04em; text-shadow:0 0 8px #61ff91; }
+@keyframes crt-range-sweep { to{transform:translateY(5200%)} }
+@keyframes crt-range-detected { 50%{border-color:#fff;box-shadow:inset 0 0 40px #6aff9044,0 0 28px #b6ffc588} }
+
+/* Floating-period prompt used by the SMA / EMA command buttons. */
+.sf-matrix .crt-chart-console:has(.crt-agent-period) {pointer-events:auto;}
+.sf-matrix .crt-agent-period {display:flex; flex-direction:column; align-items:flex-end; gap:5px; text-align:right; text-shadow:0 0 9px #55ffc380;}
+.sf-matrix .crt-agent-question {margin:0; color:#7fffc1; min-height:1.6em; letter-spacing:.04em;}
+.sf-matrix .crt-agent-period-form {display:flex; align-items:baseline; justify-content:flex-end; gap:.4em; margin:0; min-height:1.6em; font:inherit;}
+.sf-matrix .crt-agent-period-line,.sf-matrix .crt-agent-period-form input {color:#ff657f; animation:crt-agent-period-flash .72s steps(1,end) infinite;}
+.sf-matrix .crt-agent-period-form input {width:3ch; min-width:3ch; padding:0; border:0; outline:0; border-radius:0; background:transparent; color:#ff657f; caret-color:#ff657f; font:inherit; text-align:left; box-shadow:none;}
+.sf-matrix .crt-agent-period-form input:focus {outline:0; box-shadow:none;}
+.sf-matrix .crt-agent-period-form input::placeholder {color:#ff657f; opacity:1; animation:crt-cursor .85s steps(1,end) infinite;}
+.sf-matrix .crt-agent-period-form input::selection {color:#06120c; background:#ff657f;}
+.sf-matrix .crt-agent-period-error {margin:0; color:#ffd383; font-size:10px; text-shadow:0 0 8px #ffba5480;}
+@keyframes crt-agent-period-flash {0%,49%{opacity:1;color:#ff657f}50%,100%{opacity:.28;color:#ff314f}}
+
+.sf-matrix .crt-demo-controls { display:flex; flex:0 0 auto; align-items:center; gap:5px; }
+.sf-matrix .crt-demo-controls button { padding:4px 6px; border:1px solid #286440; border-radius:0; color:#99d5aa; background:#06130b; font:9px/1 Consolas,monospace; white-space:nowrap; cursor:pointer; }
+.sf-matrix .crt-demo-controls button:hover:not(:disabled) { color:#d4ffe0; border-color:#67ef91; box-shadow:0 0 9px #43ff7726; }
+.sf-matrix .crt-demo-controls button:disabled { opacity:.5; cursor:wait; }
+.sf-matrix .crt-demo-controls button:focus-visible { outline:2px solid #d7ffe9; outline-offset:2px; }
+@media(max-width:850px) { .sf-matrix .crt-demo-controls button { font-size:7px; padding:3px 4px; } }
+@media(prefers-reduced-motion:reduce) {
+  .sf-matrix .sf-chart-box .matrix-agent-art,.sf-matrix .sf-right-column { transition:none!important; }
+  .sf-matrix .crt-phosphor-pulse,.sf-matrix .crt-phosphor-pulse::before,.sf-matrix .crt-phosphor-pulse i,.sf-matrix .crt-range-scan-beam,.sf-matrix .crt-range-scan.is-detected,.sf-matrix .crt-agent-period-line,.sf-matrix .crt-agent-period-form input { animation:none!important; }
+  .sf-matrix .crt-range-scan-beam { top:50%; opacity:.65; }
+  .sf-matrix .crt-agent-period-line,.sf-matrix .crt-agent-period-form input { color:#ff657f; opacity:1; }
 }

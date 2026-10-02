@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   CandlestickSeries,
   HistogramSeries,
@@ -421,6 +421,9 @@ export function MarketChart({
   alerts = [],
   onAlertSelect,
   onFeedStateChange,
+  simulationTickId = 0,
+  rangeScanId = 0,
+  rangeScanDetected = false,
 }: {
   timeframe: ChartTimeframe
   symbol?: string
@@ -455,6 +458,9 @@ export function MarketChart({
   alerts?: AlertRule[]
   onAlertSelect?: (alertId: string) => void
   onFeedStateChange?: (state: MarketFeedState) => void
+  simulationTickId?: number
+  rangeScanId?: number
+  rangeScanDetected?: boolean
 }) {
   const drawingScope = `${symbol.trim().toUpperCase()}|${timeframe}`
 
@@ -523,6 +529,22 @@ export function MarketChart({
   useEffect(() => () => { if (drawingMoveFrameRef.current !== null) window.cancelAnimationFrame(drawingMoveFrameRef.current) }, [])
   const liveHistoryRef = useRef<CandlestickData<UTCTimestamp>[]>([])
   const [lastBar, setLastBar] = useState<CandlestickData<UTCTimestamp> | null>(null)
+  const [phosphorPulse, setPhosphorPulse] = useState<{ id: number; x: number; y: number } | null>(null)
+  const handledTickId = useRef(0)
+  useEffect(() => {
+    if (!simulationTickId || simulationTickId === handledTickId.current) return
+    handledTickId.current = simulationTickId
+    const chart = chartRef.current
+    const candleSeries = candlesRef.current
+    const latest = currentBarRef.current ?? lastBar ?? data.at(-1)
+    if (!chart || !candleSeries || !latest) return
+    const x = chart.timeScale().timeToCoordinate(latest.time)
+    const y = candleSeries.priceToCoordinate(latest.close)
+    if (x === null || y === null) return
+    setPhosphorPulse({ id: simulationTickId, x, y })
+    const timer = window.setTimeout(() => setPhosphorPulse(current => current?.id === simulationTickId ? null : current), 1750)
+    return () => window.clearTimeout(timer)
+  }, [simulationTickId])
   const [planner, setPlanner] = useState<PlannerState | null>(null)
   const [plannerTime, setPlannerTime] = useState<PlannerTimeRange | null>(null)
   const [plannerSide, setPlannerSide] = useState<PlannerSide | null>(null)
@@ -1810,6 +1832,19 @@ export function MarketChart({
   const draftKind = drawingKind === 'channel' && draftPoints.length === 2 ? 'trend' : drawingKind
   const draftAnnotation: ChartAnnotation | null = draftKind && draftPoints.length >= DRAWING_POINT_COUNTS[draftKind] ? { id: 'draft', kind: draftKind, points: draftPoints.slice(0, DRAWING_POINT_COUNTS[draftKind]), label: drawingRequest?.label } : null
   const hasVisibleRsiPane = indicators.includes('RSI') && indicatorSettings.RSI?.visible !== false
+  const selectedScanRange = selectedDrawing ? chartAnnotations.find(annotation => annotation.id === selectedDrawing && annotation.kind === 'rectangle') : null
+  const scanRangeStyle: CSSProperties | undefined = (() => {
+    if (!selectedScanRange || !chartRef.current || !candlesRef.current) return undefined
+    const points = selectedScanRange.points.map(point => ({
+      x: chartRef.current!.timeScale().timeToCoordinate(point.time),
+      y: candlesRef.current!.priceToCoordinate(point.price),
+    }))
+    if (points.some(point => point.x === null || point.y === null)) return undefined
+    const xs = points.map(point => point.x as number), ys = points.map(point => point.y as number)
+    const left = Math.min(...xs), top = Math.min(...ys), width = Math.max(...xs) - left, height = Math.max(...ys) - top
+    if (![left,top,width,height].every(Number.isFinite) || width < 4 || height < 4) return undefined
+    return { inset:'auto', left, top, width, height }
+  })()
 
   return (
     <div
@@ -1842,6 +1877,8 @@ export function MarketChart({
       onPointerCancel={() => { drawingGestureRef.current = null; drawingSequenceRef.current = []; setDrawingAnchors([]); setDrawingCursor(null) }}
     >
       <div ref={containerRef} className="market-chart__canvas" />
+      {rangeScanId > 0 && <div key={`scan-${rangeScanId}`} className={`crt-range-scan${rangeScanDetected ? ' is-detected' : ''}`} style={scanRangeStyle} aria-hidden="true"><span className="crt-range-scan-beam" /></div>}
+      {phosphorPulse && <span key={phosphorPulse.id} className="crt-phosphor-pulse" style={{ left: phosphorPulse.x, top: phosphorPulse.y }} aria-hidden="true"><i /><b /></span>}
       <svg className="market-chart__drawing-overlay" data-testid="drawing-overlay" data-revision={drawingRevision} width="100%" height="100%" viewBox={'0 0 ' + (rootRef.current?.clientWidth || 1) + ' ' + (rootRef.current?.clientHeight || 1)} aria-label="Rysunki na wykresie">
         {vegaProposal && (() => {
           const candles = candlesRef.current

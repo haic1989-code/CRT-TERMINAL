@@ -15,6 +15,19 @@ const RAIN_COLUMNS = Array.from({ length: 30 }, (_, index) => ({
   content: Array.from({ length: 32 }, (_, digit) => ((index * 17 + digit * 7 + digit * index) % 2).toString()).join('\n'),
 }))
 
+async function readBridgeStartupMessage(): Promise<string> {
+  try {
+    const { invoke, isTauri } = await import('@tauri-apps/api/core')
+    if (!isTauri()) return ''
+    const raw = await invoke<string | null>('read_bridge_startup_status')
+    if (!raw) return ''
+    const status = JSON.parse(raw) as { message?: unknown }
+    return typeof status.message === 'string' ? status.message : ''
+  } catch {
+    return ''
+  }
+}
+
 function hasCompletedStartup() {
   try {
     return window.sessionStorage.getItem(SESSION_KEY) === 'complete'
@@ -29,6 +42,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState(0)
   const [closing, setClosing] = useState(false)
   const [bridgeReady, setBridgeReady] = useState(false)
+  const [bridgeStartupMessage, setBridgeStartupMessage] = useState('')
   const [checking, setChecking] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const continueButton = useRef<HTMLButtonElement>(null)
@@ -43,8 +57,11 @@ export function StartupGate({ children }: { children: ReactNode }) {
       setChecking(true)
       const ready = await isMt5BridgeReady()
       if (dead) return
+      const startupMessage = ready ? '' : await readBridgeStartupMessage()
+      if (dead) return
       setChecking(false)
       setBridgeReady(ready)
+      setBridgeStartupMessage(startupMessage)
       if (ready) setPhase(STATUS_LINES.length)
       else { setPhase(2); timer = window.setTimeout(check, 1200) }
     }
@@ -108,7 +125,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
           {bridgeReady && phase >= STATUS_LINES.length && <button ref={continueButton} className="sf-startup-ready" type="button" onClick={continueToTerminal} disabled={closing}>
             <span>TERMINAL GOTOWY</span><b>NACIŚNIJ ENTER, ABY KONTYNUOWAĆ</b><i aria-hidden="true">▌</i>
           </button>}
-          {!bridgeReady && <p className="sf-startup-wait">{checking ? 'OCZEKIWANIE NA MOST MT5' : 'MOST MT5 NIEDOSTĘPNY'}<span aria-hidden="true">...</span></p>}
+          {!bridgeReady && <><p className="sf-startup-wait">{checking ? 'OCZEKIWANIE NA MOST MT5' : 'MOST MT5 NIEDOSTĘPNY'}<span aria-hidden="true">...</span></p>{bridgeStartupMessage && <p className="sf-startup-diagnostic" role="status">{bridgeStartupMessage}</p>}</>}
         </div>
         <footer className="sf-startup-footer"><span>SESJA LOKALNA</span><span>WYKRES / WSKAŹNIKI</span><span>STAN: {bridgeReady ? 'GOTOWY' : 'ŁĄCZENIE MT5'}</span></footer>
       </section>

@@ -34,54 +34,68 @@ try {
     Write-BridgeStartupStatus 'starting' 'PowerShell opened start.ps1.'
     # Use .NET path operations below: hidden GUI-launched PowerShell can have
     # no active FileSystem drive for PowerShell's Join-Path provider.
-    $pythonCommand = Get-Command py,python -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandType -eq 'Application' } |
-        Select-Object -First 1
+    # The Windows `py.exe` launcher can exist even when it has no registered
+    # interpreter. Probe candidates and prefer a working python.exe instead
+    # of trusting command order (which previously selected an empty launcher).
+    $pythonSource = $null
+    $pythonArgs = @()
+    foreach ($candidateName in @('python', 'py')) {
+        $candidate = Get-Command $candidateName -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandType -eq 'Application' } |
+            Select-Object -First 1
+        if (-not $candidate) { continue }
+        $candidateArgs = if ($candidateName -eq 'py') { @('-3.13') } else { @() }
+        $versionOutput = & $candidate.Source @candidateArgs --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and ($versionOutput -join ' ') -match 'Python 3\.13\.') {
+            $pythonSource = $candidate.Source
+            $pythonArgs = $candidateArgs
+            break
+        }
+    }
 
-    if (-not $pythonCommand) {
-        throw 'Python nie jest zainstalowany lub nie ma go w PATH. Zainstaluj Python x64.'
+    if (-not $pythonSource) {
+        throw 'Nie znaleziono dzialajacego Python 3.13 x64. Python Launcher bez zarejestrowanego interpretera nie wystarcza.'
     }
 
     $venvDirectory = [System.IO.Path]::Combine($RuntimeRoot, '.venv')
     $venvPython = [System.IO.Path]::Combine($venvDirectory, 'Scripts\python.exe')
     $requirementsFile = [System.IO.Path]::Combine($BridgeRoot, 'requirements.txt')
+    $wheelhouseDirectory = [System.IO.Path]::Combine($BridgeRoot, 'wheelhouse')
     $bridgeFile = [System.IO.Path]::Combine($BridgeRoot, 'bridge.py')
 
-    if (-not [System.IO.File]::Exists($venvPython)) {
-        Write-BridgeStartupStatus 'starting' 'Tworze srodowisko Python .venv.'
+    if (-not [System.IO.Directory]::Exists($wheelhouseDirectory)) {
+        throw ('Brakuje lokalnych pakietów mostu: ' + $wheelhouseDirectory)
+    }
+
+    $venvVersion = $null
+    if ([System.IO.File]::Exists($venvPython)) {
+        $venvVersion = & $venvPython -c 'import sys; print(".".join(map(str, sys.version_info[:2])))' 2>$null
+        if ($LASTEXITCODE -ne 0) { $venvVersion = $null }
+    }
+
+    if (-not [System.IO.File]::Exists($venvPython) -or $venvVersion -ne '3.13') {
+        Write-BridgeStartupStatus 'starting' 'Przygotowuje lokalne srodowisko Python 3.13.'
         Write-Host 'Tworze srodowisko Python .venv...' -ForegroundColor Yellow
-        & $pythonCommand.Source -m venv $venvDirectory
+        & $pythonSource @pythonArgs -m venv --clear $venvDirectory
         $venvExitCode = $LASTEXITCODE
         if ($venvExitCode -ne 0 -or -not [System.IO.File]::Exists($venvPython)) {
             throw ('Nie udalo sie utworzyc srodowiska .venv (kod ' + $venvExitCode + ').')
         }
     }
 
-    Write-BridgeStartupStatus 'starting' 'Sprawdzam wymagane pakiety Python.'
-    $packagesReady = $false
-    try {
-        & $venvPython -c 'import MetaTrader5, fastapi, uvicorn' 2>$null
-        $packagesReady = ($LASTEXITCODE -eq 0)
-    } catch {
-        $packagesReady = $false
+    Write-BridgeStartupStatus 'starting' 'Weryfikuje przypiete pakiety z lokalnego zestawu, bez dostepu do sieci.'
+    Write-Host 'Weryfikuje lokalne pakiety MT5 Bridge...' -ForegroundColor Yellow
+    $pipOutput = & $venvPython -m pip install --disable-pip-version-check --no-input --no-index --find-links $wheelhouseDirectory -r $requirementsFile 2>&1
+    $pipExitCode = $LASTEXITCODE
+    if ($pipExitCode -ne 0) {
+        $pipDetails = ($pipOutput | Select-Object -Last 8) -join ' | '
+        throw ('Nie udalo sie przygotowac lokalnych pakietow mostu (kod ' + $pipExitCode + '). ' + $pipDetails)
     }
 
-    if (-not $packagesReady) {
-        Write-BridgeStartupStatus 'starting' 'Instaluje brakujace pakiety z requirements.txt.'
-        Write-Host 'Instaluje brakujace pakiety MT5 Bridge...' -ForegroundColor Yellow
-        & $venvPython -m pip install -r $requirementsFile
-        $pipExitCode = $LASTEXITCODE
-        if ($pipExitCode -ne 0) {
-            throw ('Instalacja requirements.txt nie powiodla sie (kod ' + $pipExitCode + ').')
-        }
-
-        & $venvPython -c 'import MetaTrader5, fastapi, uvicorn'
-        $verifyExitCode = $LASTEXITCODE
-        if ($verifyExitCode -ne 0) {
-            throw ('Weryfikacja pakietow Python nie powiodla sie (kod ' + $verifyExitCode + ').')
-        }
-    } else {
-        Write-Host 'Wymagane pakiety sa juz gotowe; pomijam pip install.' -ForegroundColor Green
+    & $venvPython -c 'import MetaTrader5, fastapi, uvicorn'
+    $verifyExitCode = $LASTEXITCODE
+    if ($verifyExitCode -ne 0) {
+        throw ('Weryfikacja pakietow Python nie powiodla sie (kod ' + $verifyExitCode + ').')
     }
 
     Write-Host ''
