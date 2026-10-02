@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { readMt5BridgeReadiness } from './bridgeStartup'
 import './startup-gate.css'
 
 const SESSION_KEY = 'smartflow-x:startup-ready:v1'
+const WARP_DURATION_MS = 1400
+const WARP_RAYS = Array.from({ length: 84 }, (_, index) => ({
+  '--ray-angle': `${index * 137.508}deg`,
+  '--ray-delay': `${(index % 9) * 22}ms`,
+  '--ray-distance': `${3 + (index * 7 % 13)}vmin`,
+  '--ray-length': `${18 + (index * 11 % 32)}vmax`,
+} as CSSProperties))
 const STATUS_LINES = [
   { label: 'SILNIK WYKRESU', value: 'GOTOWY' },
   { label: 'MODUŁY INTERFEJSU', value: 'GOTOWE' },
@@ -46,6 +53,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const continueButton = useRef<HTMLButtonElement>(null)
+  const closeTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
 
   useEffect(() => {
     if (!visible) return
@@ -84,7 +93,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
       url.searchParams.delete('boot')
       window.history.replaceState({}, '', url)
     }
-    window.setTimeout(() => setVisible(false), 260)
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    closeTimer.current = window.setTimeout(() => setVisible(false), reducedMotion ? 160 : WARP_DURATION_MS)
   }, [bridgeReady, closing, forcedBoot, phase])
 
   useEffect(() => {
@@ -107,6 +117,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
       {children}
     </div>
     {visible && <div className={`sf-startup-overlay${closing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="startup-title">
+      {closing && <div className="sf-startup-warp" aria-hidden="true">
+        {WARP_RAYS.map((style, index) => <span key={index} className="sf-startup-warp-ray" style={style}><i>{index % 2 ? '01' : '10'}</i></span>)}
+      </div>}
       <div className="sf-startup-rain" aria-hidden="true">
         {RAIN_COLUMNS.map((column, index) => <span key={index} style={{ left: column.left, animationDuration: column.duration, animationDelay: column.delay }}>{column.content}</span>)}
       </div>
