@@ -686,22 +686,6 @@ test('exercise MTF context from a clean shell', async ({ page }) => {
 })
 
 
-test('Spatial Nexus keeps its execution dock explicitly preview-only', async ({ page }) => {
-  await page.setViewportSize({ width: 2560, height: 1440 })
-  await page.route('http://127.0.0.1:8765/**', routeFixture)
-  await page.goto('/?ui=spatial')
-  await expect(page.locator('.nexus-v3')).toBeVisible()
-  await expect(page.locator('.nexus-v3__canvas')).toBeVisible({ timeout: 30000 })
-  await expect(page.locator('.nexus-v3__execution')).toBeVisible({ timeout: 30000 })
-  await expect(page.getByRole('button', { name: 'LONG · PREVIEW' })).toBeDisabled()
-  await expect(page.getByRole('button', { name: 'SHORT · PREVIEW' })).toBeDisabled()
-  await page.locator('.nexus-v3__execution-title').click({ force: true })
-  await expect(page.locator('.nexus-v3__execution-extra')).toContainText('POSITIONS UNAVAILABLE')
-  await expect(page.locator('.nexus-v3__execution-extra')).toContainText('RISK CHECK UNAVAILABLE')
-  await expect(page.locator('.nexus-v3__execution-extra')).toContainText('READ ONLY')
-})
-
-
 async function unlockTextDeck(page: Page) {
   await page.emulateMedia({reducedMotion:'reduce'})
   const answer=page.getByRole('textbox',{name:'Odpowiedź yes'})

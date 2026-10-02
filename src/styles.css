@@ -1088,7 +1088,6 @@ button { color: inherit; }
     right: calc(var(--price-rail-width) + 10px);
   }
 }
-/* CHECKPOINT 04A — SPATIAL LONG POSITION PLANNER */
 .position-planner {
   position: absolute;
   z-index: 5;
