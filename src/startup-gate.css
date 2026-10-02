@@ -15,7 +15,7 @@
 .sf-startup-warp-ray:nth-child(3n) i { background:linear-gradient(90deg,transparent,#24cbd480,#bdffff); box-shadow:0 0 5px #38dde699; }
 .sf-startup-warp-canvas {position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;}
 .sf-startup-warp-canvas[data-ready="true"] {opacity:1;}
-.sf-startup-warp:has(.sf-startup-warp-canvas[data-ready="true"]) .sf-startup-warp-ray {display:none;}
+.sf-startup-warp:has(.sf-startup-warp-canvas[data-ready="true"]) .sf-startup-warp-ray {opacity:.15;}
 @keyframes sf-startup-warp-ray { 0%{opacity:0;transform:translateX(0) scaleX(.01)} 18%{opacity:.65} 68%{opacity:1} 100%{opacity:0;transform:translateX(85vmax) scaleX(1.5)} }
 @keyframes sf-startup-warp-window { to { opacity:0;transform:scale(.65);filter:blur(3px); } }
 @keyframes sf-startup-warp-flight { 0%{opacity:0;transform:scale(.7)} 12%{opacity:1;transform:scale(1)} 86%{opacity:1;transform:scale(1.12)} 100%{opacity:0;transform:scale(1.3)} }

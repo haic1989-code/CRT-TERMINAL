@@ -76,6 +76,8 @@ export default function MatrixWarp({ durationMs }: { durationMs: number }) {
     const materials = [1.0, 5.0].map((thickness, index) => new THREE.ShaderMaterial({
       vertexShader, fragmentShader,
       uniforms: { travel, speed, thickness: { value: thickness }, light: { value: index ? 0.1 : 0.78 } },
+      // These radial ribbons face outward; the camera travels inside the tunnel.
+      side: THREE.DoubleSide,
       transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
     }))
     materials.forEach(material => {
@@ -98,7 +100,7 @@ export default function MatrixWarp({ durationMs }: { durationMs: number }) {
     const observer = new ResizeObserver(resize)
     observer.observe(element)
     resize()
-    let frame = 0, stopped = false, last = performance.now()
+    let frame = 0, stopped = false, firstFrame = true, last = performance.now()
     const start = last
     renderer.debug.onShaderError = () => {
       stopped = true
@@ -113,6 +115,7 @@ export default function MatrixWarp({ durationMs }: { durationMs: number }) {
       travel.value += delta * (80 + speed.value * 650)
       try {
         renderer.render(scene, camera)
+        if (!stopped && firstFrame) { firstFrame = false; setReady(true) }
       } catch {
         stopped = true
         setReady(false)
@@ -143,7 +146,6 @@ export default function MatrixWarp({ durationMs }: { durationMs: number }) {
     media.addEventListener('change', stopForMotion)
     element.addEventListener('webglcontextlost', contextLost)
     frame = requestAnimationFrame(render)
-    setReady(true)
     return () => {
       stopped = true
       cancelAnimationFrame(frame)
