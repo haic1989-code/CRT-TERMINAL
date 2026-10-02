@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { readMt5BridgeReadiness } from './bridgeStartup'
 import './startup-gate.css'
 
 const SESSION_KEY = 'smartflow-x:startup-ready:v1'
 const WARP_DURATION_MS = 7000
+const loadWarp = () => import('./MatrixWarp')
+const MatrixWarp = lazy(loadWarp)
+class WarpFallback extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  render() { return this.state.failed ? null : this.props.children }
+}
 const WARP_RAYS = Array.from({ length: 84 }, (_, index) => ({
   '--ray-angle': `${index * 137.508}deg`,
   '--ray-delay': `${-(index % 19) * 73}ms`,
@@ -55,6 +62,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const continueButton = useRef<HTMLButtonElement>(null)
   const closeTimer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(closeTimer.current), [])
+  useEffect(() => {
+    if (visible && !matchMedia('(prefers-reduced-motion: reduce)').matches) void loadWarp().catch(() => {})
+  }, [visible])
 
   useEffect(() => {
     if (!visible) return
@@ -119,6 +129,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
     {visible && <div className={`sf-startup-overlay${closing ? ' is-closing' : ''}`} style={{ '--warp-duration': `${WARP_DURATION_MS}ms` } as CSSProperties} role="dialog" aria-modal="true" aria-labelledby="startup-title">
       {closing && <div className="sf-startup-warp" aria-hidden="true">
         {WARP_RAYS.map((style, index) => <span key={index} className="sf-startup-warp-ray" style={style}><i>{index % 2 ? '01' : '10'}</i></span>)}
+        <WarpFallback><Suspense fallback={null}><MatrixWarp durationMs={WARP_DURATION_MS} /></Suspense></WarpFallback>
       </div>}
       <div className="sf-startup-rain" aria-hidden="true">
         {RAIN_COLUMNS.map((column, index) => <span key={index} style={{ left: column.left, animationDuration: column.duration, animationDelay: column.delay }}>{column.content}</span>)}

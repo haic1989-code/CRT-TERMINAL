@@ -7,7 +7,11 @@ Statusy: POMYSŁ / ZAAKCEPTOWANE / W REALIZACJI / WDROŻONE / ODRZUCONE.
 ======================================================================
 001. DYNAMIKA PRAWEGO PANELU
 Data dodania: 2026-10-03
-Status: POMYSŁ
+Status: WDROŻONE (kod wersji 0.1.12; odbiór wizualny jeszcze niewykonany)
+
+Realizacja: GSAP steruje światłem pasków i impulsami zmian danych.
+Dodano płynne przejścia kolorów, kontrolkę live i animację wypełnienia lota.
+Szczegóły i ograniczenia: docs/releases/0.1.12-matrix-motion.md.
 
 Cel: ożywić panel w stylu Matrix CRT, zachowując czytelność i zgodność
 wyświetlanych informacji z rzeczywistymi danymi MT5.

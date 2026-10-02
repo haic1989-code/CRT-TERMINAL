@@ -177,3 +177,18 @@
 .sf-matrix .matrix-command-deck .targets button{border:1px solid #315575;padding:8px 5px;}
 @media(max-width:1600px){.sf-matrix .matrix-command-deck{padding:20px 16px}.sf-matrix .matrix-command-deck .pair-grid{column-gap:12px}.sf-matrix .matrix-command-deck .context-item{grid-template-columns:3ch 36px minmax(0,1fr);gap:5px}.sf-matrix .matrix-command-deck .direction-bar{width:36px;min-width:36px}}
 @media(max-width:1150px){.sf-matrix .matrix-command-deck .pair-grid{grid-template-columns:1fr}}
+
+/* Light travels across the direction markers; it never changes their values. */
+.sf-matrix .matrix-command-deck .direction-bar{position:relative;overflow:hidden;transition:color .3s ease;}
+.sf-matrix .matrix-command-deck .direction-bar i{transition:background-color .3s ease;}
+.sf-matrix .matrix-command-deck .direction-beam{position:absolute;top:0;bottom:0;left:0;width:16px;background:linear-gradient(90deg,transparent,currentColor,transparent);opacity:.55;transform:translateX(-18px);pointer-events:none;mask-image:repeating-linear-gradient(90deg,#000 0 7px,transparent 7px 10px);}
+.sf-matrix .matrix-command-deck .context-item{--update-glow:0;position:relative;background:rgba(75,225,185,var(--update-glow));border-radius:2px;}
+.sf-matrix .matrix-command-deck .context-item>span:last-child{transition:color .3s ease;}
+.sf-matrix .matrix-command-deck .deck-feed-state{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:10px;letter-spacing:.08em;color:var(--dim);}
+.sf-matrix .matrix-command-deck .deck-feed-state i{width:5px;height:5px;background:var(--amber);border-radius:50%;}
+.sf-matrix .matrix-command-deck[data-feed="live"] .deck-feed-state i{background:var(--green);box-shadow:0 0 6px #67ffc066;}
+.sf-matrix .matrix-command-deck[data-feed="live"][data-motion="on"] .deck-feed-state i{animation:deck-connection-light 2.8s ease-in-out infinite;}
+.sf-matrix .matrix-command-deck[data-motion="off"] .direction-beam{display:none;}
+.sf-matrix .matrix-command-deck[data-motion="off"] :is(.direction-bar,.direction-bar i,.context-item>span:last-child){transition:none;}
+@keyframes deck-connection-light{0%,100%{opacity:.55}50%{opacity:1}}
+@media(prefers-reduced-motion:reduce){.sf-matrix .matrix-command-deck .deck-feed-state i{animation:none!important;}}

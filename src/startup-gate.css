@@ -13,6 +13,9 @@
 .sf-startup-warp-ray { position:absolute; left:50%; top:50%; width:1px; height:1px; transform:rotate(var(--ray-angle)); }
 .sf-startup-warp-ray i { position:absolute; left:var(--ray-distance); width:var(--ray-length); height:1px; overflow:hidden; color:#a3ffd5; font:8px/1 Consolas,monospace; background:linear-gradient(90deg,transparent,#36e89b80,#bcffe9); box-shadow:0 0 5px #4bffb399; transform-origin:left center; animation:sf-startup-warp-ray 1400ms cubic-bezier(.6,0,.9,.35) var(--ray-delay) infinite both; }
 .sf-startup-warp-ray:nth-child(3n) i { background:linear-gradient(90deg,transparent,#24cbd480,#bdffff); box-shadow:0 0 5px #38dde699; }
+.sf-startup-warp-canvas {position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;}
+.sf-startup-warp-canvas[data-ready="true"] {opacity:1;}
+.sf-startup-warp:has(.sf-startup-warp-canvas[data-ready="true"]) .sf-startup-warp-ray {display:none;}
 @keyframes sf-startup-warp-ray { 0%{opacity:0;transform:translateX(0) scaleX(.01)} 18%{opacity:.65} 68%{opacity:1} 100%{opacity:0;transform:translateX(85vmax) scaleX(1.5)} }
 @keyframes sf-startup-warp-window { to { opacity:0;transform:scale(.65);filter:blur(3px); } }
 @keyframes sf-startup-warp-flight { 0%{opacity:0;transform:scale(.7)} 12%{opacity:1;transform:scale(1)} 86%{opacity:1;transform:scale(1.12)} 100%{opacity:0;transform:scale(1.3)} }

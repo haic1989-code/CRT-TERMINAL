@@ -148,6 +148,7 @@ export function SmartFlowShell() {
   const [portfolioSpecs, setPortfolioSpecs] = useState<Record<string, SymbolSpec>>({})
   const [fxBars, setFxBars] = useState<Record<string, MarketBar[]>>({})
   const [contextBars, setContextBars] = useState<Record<string, MarketBar[]>>({})
+  const [contextObservedAt, setContextObservedAt] = useState(0)
   const [drawer, setDrawer] = useState<DrawerId>(null)
   const [initialBottomPanel] = useState(() => readBottomPanelState(bottomStorageKey, dragon ? 0.38 : 0.65))
   const [bottomTab, setBottomTab] = useState<BottomTab>(initialBottomPanel.tab)
@@ -286,15 +287,19 @@ export function SmartFlowShell() {
   useEffect(() => {
     let dead = false
     setContextBars({})
+    setContextObservedAt(0)
     let pending = false
     const refresh = async () => {
       if (pending) return
       pending = true
       try {
         const result = await fetchMt5ContextBars(symbol)
-        if (!dead) setContextBars(result.values as Record<string, MarketBar[]>)
+        if (!dead) {
+          setContextBars(result.values as Record<string, MarketBar[]>)
+          setContextObservedAt(Date.now())
+        }
       } catch {
-        if (!dead) setContextBars({})
+        if (!dead) { setContextBars({}); setContextObservedAt(0) }
       } finally { pending = false }
     }
     refresh()
@@ -738,6 +743,8 @@ export function SmartFlowShell() {
       </section>
       <aside className={dragon ? 'sf-right-column matrix-text-column' : 'sf-right-column'}>
         {dragon ? <MatrixCommandDeck
+          feedStatus={feed.status} contextLive={feed.status === 'live' && contextObservedAt > 0 && Date.now() - contextObservedAt < 65000}
+          contextSnapshots={Object.fromEntries(CONTEXT_TIMEFRAMES.map(tf => [tf, JSON.stringify(contextBars[tf]?.at(-1) ?? null)]))}
           onPreviewPhosphor={() => setSimulationTickId(id => id + 1)} onPreviewScan={() => setRangeScan({id:++rangeScanSequence.current,detected:false})} scanRunning={Boolean(rangeScan)}
           symbol={feed.symbol || symbol} contextTimeframe={contextTimeframe} directions={mtfDirections} session={`${contextSummary.activeSession} · ${contextSummary.volatilityState}`}
           onContext={tf => setContextTimeframe(tf as ContextTimeframe)} levels={PRICE_LEVEL_GROUP_OPTIONS} activeLevels={priceLevelGroups} onLevel={togglePriceLevelGroup}
