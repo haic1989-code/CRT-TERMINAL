@@ -1,0 +1,9 @@
+.sf-terminal-exit{margin-left:14px;border:1px solid #ae5860;background:#251016;color:#ff9aa6;font:inherit;padding:6px 10px;cursor:pointer;letter-spacing:.07em}
+.sf-terminal-exit:hover{color:#ffe3df;border-color:#ff8a97;box-shadow:0 0 12px #ff607333}
+.sf-terminal-exit:focus-visible{outline:2px solid #ffcf8a;outline-offset:3px}
+.sf-shutdown-overlay .sf-startup-status{grid-template-columns:60px 1fr 90px;font-size:12px}
+.sf-shutdown-overlay .sf-startup-status-list{min-height:126px}
+.sf-shutdown-bye{font:700 25px/1.5 Consolas,monospace;letter-spacing:.12em;color:#83f2c3;text-shadow:0 0 18px #45e9ad77;margin:24px 0 8px;outline:none;animation:sf-startup-status-glow 1.4s ease-in-out infinite alternate}
+.sf-shutdown-note{font-size:11px;color:#91b9c3}
+.sf-shutdown-error{color:#ff9aa1;overflow-wrap:anywhere;font-size:11px}
+@media(max-width:450px){.sf-shutdown-overlay .sf-startup-content{padding:20px 0}.sf-shutdown-overlay .sf-startup-status{grid-template-columns:42px 1fr 70px;font-size:10px}.sf-terminal-exit{margin-left:8px;padding:6px;font-size:10px}}

@@ -1,0 +1,44 @@
+{
+  "name": "crt-terminal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:app": "vite --host 127.0.0.1 --port 5174 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:visual": "playwright test",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build"
+  },
+  "dependencies": {
+    "@gsap/react": "2.1.2",
+    "@pixiv/three-vrm": "3.5.5",
+    "@react-three/drei": "10.7.9",
+    "@react-three/fiber": "^9.8.0",
+    "@react-three/postprocessing": "3.1.1",
+    "@react-three/uikit": "1.0.76",
+    "@tauri-apps/api": "^2.12.1",
+    "gsap": "3.15.0",
+    "lightweight-charts": "^5.2.1",
+    "postprocessing": "6.39.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tauri-apps/cli": "^2.12.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/three": "^0.185.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.0",
+    "vitest": "^3.2.4"
+  }
+}

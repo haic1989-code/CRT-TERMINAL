@@ -1,0 +1,57 @@
+name: CRT Terminal Windows Installer
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-windows-installer.yml'
+      - '.github/workflows/crt-terminal-ci.yml'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'mt5-bridge/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'index.html'
+      - 'vite.config.*'
+      - 'tsconfig*.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crt-terminal-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build single NSIS installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Build CRT Terminal installer
+        run: npm run app:build -- --bundles nsis
+
+      - name: Publish installer artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: CRT-Terminal-setup-${{ github.sha }}
+          path: src-tauri/target/release/bundle/nsis/*_x64-setup.exe
+          if-no-files-found: error
+          retention-days: 30
