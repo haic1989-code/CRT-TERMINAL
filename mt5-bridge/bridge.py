@@ -4,6 +4,10 @@ import os
 import math
 import threading
 import secrets
+import json
+import socket
+import time
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,6 +21,12 @@ HOST = "127.0.0.1"
 PORT = int(os.getenv("SMARTFLOW_MT5_PORT", "8765"))
 TERMINAL_PATH = os.getenv("MT5_TERMINAL_PATH", "").strip() or None
 PREFERRED_SYMBOL = os.getenv("MT5_SYMBOL", "XAUUSD").strip() or "XAUUSD"
+PROTOCOL_VERSION = 2
+BRIDGE_ID = "SMARTFLOW_X_MT5"
+OWNER = os.getenv("SMARTFLOW_BRIDGE_OWNER", "manual")
+_identity: tuple[int, str, str] | None = None
+_next_initialize = 0.0
+_daily_cache: tuple[float, Any] | None = None
 
 DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:5173",
@@ -73,7 +83,21 @@ TIMEFRAMES = {
     "W1": mt5.TIMEFRAME_W1,
 }
 
-_lock = threading.RLock()
+class _ApiLock:
+    """Serialize MT5 IPC without letting queued HTTP calls wait indefinitely."""
+    def __init__(self):
+        self.lock = threading.RLock()
+
+    def __enter__(self):
+        if not self.lock.acquire(timeout=3):
+            raise HTTPException(status_code=503, detail={"error": "MT5_API_BUSY", "hint": "MT5 nie odpowiada. Odczyt zostanie ponowiony."})
+        return self
+
+    def __exit__(self, *_args):
+        self.lock.release()
+
+
+_lock = _ApiLock()
 _resolved_symbol: str | None = None
 _closing = threading.Event()
 _shutdown_token = secrets.token_urlsafe(32)
@@ -93,7 +117,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["X-SmartFlow-MT5"],
+    expose_headers=["X-SmartFlow-MT5", "X-CRT-Protocol", "X-CRT-Instance"],
 )
 
 
@@ -108,6 +132,8 @@ async def local_network_headers(request: Request, call_next):
     if origin in ALLOWED_ORIGINS and private_network_preflight:
         response.headers["Access-Control-Allow-Private-Network"] = "true"
     response.headers["X-SmartFlow-MT5"] = "read-only"
+    response.headers["X-CRT-Protocol"] = str(PROTOCOL_VERSION)
+    response.headers["X-CRT-Instance"] = _instance
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -140,39 +166,62 @@ def _daily_win_rate(deals: Any, open_position_ids: set[int]) -> float | None:
 
 def _initialize() -> bool:
     if TERMINAL_PATH:
-        return bool(mt5.initialize(TERMINAL_PATH))
-    return bool(mt5.initialize())
+        return bool(mt5.initialize(TERMINAL_PATH, timeout=5000))
+    return bool(mt5.initialize(timeout=5000))
+
+
+def _required(value: Any, error: str) -> Any:
+    # Empty collections are valid; None is the MT5 API's error sentinel.
+    if value is None:
+        raise HTTPException(status_code=503, detail={"error": error, "last_error": _last_error()})
+    return value
 
 
 def _ensure_connected() -> None:
+    global _identity, _next_initialize, _resolved_symbol, _daily_cache
     with _lock:
         if _closing.is_set():
             raise HTTPException(status_code=503, detail={"error": "BRIDGE_SHUTTING_DOWN"})
         terminal = mt5.terminal_info()
         account = mt5.account_info()
-        if terminal is not None and account is not None:
-            return
-
-        mt5.shutdown()
-        if not _initialize():
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "MT5_INITIALIZE_FAILED",
-                    "last_error": _last_error(),
-                    "hint": "Uruchom MetaTrader 5 i zaloguj konto brokerskie.",
-                },
-            )
-
-        if mt5.account_info() is None:
+        if terminal is None or account is None:
+            if time.monotonic() < _next_initialize:
+                raise HTTPException(status_code=503, detail={"error": "MT5_RECONNECT_PENDING"})
+            _next_initialize = time.monotonic() + 2
+            mt5.shutdown()
+            _resolved_symbol = None
+            _daily_cache = None
+            initialized = _initialize()
+            _next_initialize = time.monotonic() + 2
+            if not initialized:
+                raise HTTPException(status_code=503, detail={"error": "MT5_INITIALIZE_FAILED", "last_error": _last_error(), "hint": "Uruchom MetaTrader 5 i zaloguj konto brokerskie."})
+            terminal = mt5.terminal_info()
+            account = mt5.account_info()
+        if terminal is None or account is None:
             raise HTTPException(
                 status_code=503,
                 detail={
                     "error": "MT5_ACCOUNT_NOT_CONNECTED",
                     "last_error": _last_error(),
-                    "hint": "Terminal MT5 działa, ale nie ma aktywnego konta.",
+                    "hint": "Uruchom MetaTrader 5 i zaloguj konto brokerskie.",
                 },
             )
+
+        if not terminal.connected:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "MT5_BROKER_DISCONNECTED",
+                    "last_error": _last_error(),
+                    "hint": "MT5 utracił połączenie z brokerem. Oczekiwanie na powrót połączenia.",
+                },
+            )
+        identity = (int(account.login), account.server, os.path.normcase(os.path.abspath(terminal.path)))
+        if TERMINAL_PATH and identity[2] != os.path.normcase(os.path.abspath(os.path.dirname(TERMINAL_PATH))):
+            raise HTTPException(status_code=409, detail={"error": "MT5_TERMINAL_MISMATCH"})
+        if _identity is not None and identity != _identity:
+            raise HTTPException(status_code=409, detail={"error": "MT5_ACCOUNT_CHANGED", "hint": "Zmieniono konto lub terminal MT5. Uruchom ponownie CRT Terminal, aby zatwierdzić nową sesję."})
+        _identity = identity
 
 
 def _score_symbol(name: str, preferred: str) -> tuple[int, int, str]:
@@ -205,7 +254,8 @@ def _resolve_symbol() -> str:
         if _resolved_symbol:
             info = mt5.symbol_info(_resolved_symbol)
             if info is not None:
-                mt5.symbol_select(_resolved_symbol, True)
+                if not mt5.symbol_select(_resolved_symbol, True):
+                    raise HTTPException(status_code=503, detail={"error": "SYMBOL_SELECT_FAILED", "symbol": _resolved_symbol, "last_error": _last_error()})
                 return _resolved_symbol
         _resolved_symbol = _resolve_requested_symbol(PREFERRED_SYMBOL)
         return _resolved_symbol
@@ -217,7 +267,8 @@ def _resolve_requested_symbol(requested: str | None = None) -> str:
     key = requested.upper().strip()
     direct = mt5.symbol_info(requested)
     if direct is not None:
-        mt5.symbol_select(direct.name, True)
+        if not mt5.symbol_select(direct.name, True):
+            raise HTTPException(status_code=503, detail={"error": "SYMBOL_SELECT_FAILED", "symbol": direct.name, "last_error": _last_error()})
         return direct.name
     aliases = {
         "XAUUSD": ("*XAU*", "*GOLD*"),
@@ -227,9 +278,23 @@ def _resolve_requested_symbol(requested: str | None = None) -> str:
     patterns = aliases.get(key, (f"*{key}*",))
     candidates: list[str] = []
     for pattern in patterns:
-        items = mt5.symbols_get(pattern)
+        items = _required(mt5.symbols_get(pattern), "SYMBOLS_UNAVAILABLE")
         if items:
-            candidates.extend(item.name for item in items)
+            for item in items:
+                name = item.name.upper()
+                # Accept an exact core with a broker suffix only. GOLD additionally
+                # requires matching base/profit currencies from broker metadata.
+                valid = name.startswith(key) and (len(name) == len(key) or not name[len(key)].isdigit())
+                if key == "XAUUSD":
+                    valid = ("XAUUSD" in name or "GOLD" in name) and getattr(item, "currency_base", "").upper() == "XAU" and getattr(item, "currency_profit", "").upper() == "USD"
+                if key == "BTCUSD":
+                    valid = "BTCUSD" in name and getattr(item, "currency_profit", "").upper() == "USD"
+                if key == "DJ30":
+                    valid = any(name.startswith(core) for core in ("DJ30", "US30", "DOW", "WS30", "DJI")) and getattr(item, "currency_profit", "").upper() == "USD"
+                if len(key) == 6 and key not in aliases:
+                    valid = valid and getattr(item, "currency_base", "").upper() == key[:3] and getattr(item, "currency_profit", "").upper() == key[3:]
+                if valid:
+                    candidates.append(item.name)
     unique_candidates = set(candidates)
     if key == "XAUUSD":
         candidates = sorted(unique_candidates, key=lambda name: _score_symbol(name, key))
@@ -246,21 +311,30 @@ def _resolve_requested_symbol(requested: str | None = None) -> str:
                 },
             )
         raise HTTPException(status_code=404, detail={"error": "SYMBOL_NOT_FOUND", "symbol": requested, "hint": "Wyszukaj nazwę instrumentu dostępną u brokera."})
-    mt5.symbol_select(candidates[0], True)
+    if len(candidates) != 1:
+        raise HTTPException(status_code=409, detail={"error": "SYMBOL_AMBIGUOUS", "symbol": requested, "candidates": candidates, "hint": "Wybierz dokładną nazwę instrumentu brokera."})
+    if not mt5.symbol_select(candidates[0], True):
+        raise HTTPException(status_code=503, detail={"error": "SYMBOL_SELECT_FAILED", "symbol": candidates[0], "last_error": _last_error()})
     return candidates[0]
 
 
 def _account_payload() -> dict[str, Any]:
+    global _daily_cache
     info = mt5.account_info()
     if info is None:
         raise HTTPException(status_code=503, detail={"error": "ACCOUNT_INFO_UNAVAILABLE", "last_error": _last_error()})
 
     now = datetime.now(timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    deals = mt5.history_deals_get(day_start, now)
-    day_pnl = sum(float(d.profit) + float(d.swap) + float(d.commission) for d in deals) if deals else 0.0
-    positions = mt5.positions_get() or ()
+    if _daily_cache is None or time.monotonic() - _daily_cache[0] >= 5:
+        deals = _required(mt5.history_deals_get(day_start, now), "DEALS_UNAVAILABLE")
+        _daily_cache = (time.monotonic(), deals)
+    else:
+        deals = _daily_cache[1]
+    day_pnl = sum(sum(float(getattr(d, field, 0) or 0) for field in ("profit", "swap", "commission", "fee")) for d in deals)
+    positions = _required(mt5.positions_get(), "POSITIONS_UNAVAILABLE")
     open_position_ids = {int(getattr(position, "identifier", 0) or 0) for position in positions}
+    _ensure_connected()
     return {
         "login": int(info.login),
         "server": info.server,
@@ -308,6 +382,7 @@ def _symbol_payload(symbol: str) -> dict[str, Any]:
         "currency_margin": info.currency_margin,
         "trade_mode": int(info.trade_mode),
         "visible": bool(info.visible),
+        "chart_mode": int(info.chart_mode),
     }
 
 
@@ -350,7 +425,7 @@ def _authorize_runtime(request: Request) -> None:
 @app.get("/v1/runtime")
 def runtime(request: Request):
     _authorize_runtime(request)
-    return {"instance": _instance, "closing": _closing.is_set(), "shutdown_token": _shutdown_token}
+    return {"bridge": BRIDGE_ID, "protocol_version": PROTOCOL_VERSION, "owner": OWNER, "instance": _instance, "closing": _closing.is_set(), "shutdown_token": _shutdown_token}
 
 
 @app.post("/v1/shutdown")
@@ -371,11 +446,17 @@ def health():
         _ensure_connected()
         terminal = mt5.terminal_info()
         version = mt5.version()
-        symbol = _resolve_symbol()
+        # Transport readiness is independent of a default instrument. The UI
+        # must remain usable to select an exact broker symbol when aliases are
+        # ambiguous or XAUUSD is unavailable on the connected account.
+        symbol = PREFERRED_SYMBOL
         return {
             "ok": True,
             "read_only": True,
             "bridge": "SMARTFLOW_X_MT5",
+            "protocol_version": PROTOCOL_VERSION,
+            "instance": _instance,
+            "owner": OWNER,
             "terminal": {
                 "name": terminal.name if terminal else None,
                 "company": terminal.company if terminal else None,
@@ -480,7 +561,7 @@ def snapshot(requested: str = Query(default="", alias="symbol")):
 def positions():
     with _lock:
         _ensure_connected()
-        values = mt5.positions_get() or ()
+        values = _required(mt5.positions_get(), "POSITIONS_UNAVAILABLE")
         open_position_ids = {int(getattr(position, "identifier", 0) or 0) for position in values}
         open_times = [
             int(getattr(position, "time", 0) or 0)
@@ -488,10 +569,10 @@ def positions():
             if int(getattr(position, "time", 0) or 0) > 0
         ]
         if open_times:
-            deals = mt5.history_deals_get(
+            deals = _required(mt5.history_deals_get(
                 datetime.fromtimestamp(min(open_times), timezone.utc),
                 datetime.now(timezone.utc),
-            ) or ()
+            ), "POSITION_DEALS_UNAVAILABLE")
         else:
             deals = ()
         commissions: dict[int, float] = {}
@@ -500,6 +581,7 @@ def positions():
             if position_id not in open_position_ids:
                 continue
             commissions[position_id] = commissions.get(position_id, 0.0) + float(getattr(deal, "commission", 0.0) or 0.0)
+        _ensure_connected()
         return {"observed_at": int(datetime.now(timezone.utc).timestamp() * 1000), "values": [{
             "ticket": int(p.ticket), "symbol": p.symbol,
             "type": "buy" if int(p.type) == mt5.POSITION_TYPE_BUY else "sell",
@@ -512,7 +594,8 @@ def positions():
 def orders():
     with _lock:
         _ensure_connected()
-        values = mt5.orders_get() or ()
+        values = _required(mt5.orders_get(), "ORDERS_UNAVAILABLE")
+        _ensure_connected()
         return {"observed_at": int(datetime.now(timezone.utc).timestamp() * 1000), "values": [{
             "ticket": int(o.ticket), "symbol": o.symbol, "type": str(o.type), "volume_initial": float(o.volume_initial),
             "price_open": float(o.price_open), "sl": float(o.sl), "tp": float(o.tp), "price_current": float(o.price_current), "time_setup": int(o.time_setup),
@@ -524,7 +607,7 @@ def search_symbols(q: str = Query(default="", max_length=32), limit: int = Query
     with _lock:
         _ensure_connected()
         needle = q.strip().upper()
-        values = mt5.symbols_get() or ()
+        values = _required(mt5.symbols_get(), "SYMBOLS_UNAVAILABLE")
         matches = [s for s in values if not needle or needle in s.name.upper() or needle in s.description.upper()]
         matches.sort(key=lambda s: (not s.visible, 0 if s.name.upper() == needle else 1, s.name))
         return {"values": [{"symbol": s.name, "description": s.description, "path": s.path, "digits": int(s.digits), "visible": bool(s.visible), "trade_mode": int(s.trade_mode)} for s in matches[:limit]]}
@@ -558,7 +641,7 @@ def context_bars(requested: str = Query(default="XAUUSD", alias="symbol")):
         for name in ("M5", "M15", "M30", "H1", "H4", "D1"):
             rates = mt5.copy_rates_from_pos(resolved, TIMEFRAMES[name], 0, 500)
             if rates is None:
-                continue
+                raise HTTPException(status_code=503, detail={"error": "CONTEXT_BARS_UNAVAILABLE", "timeframe": name, "last_error": _last_error()})
             values[name] = sorted([{"time": int(r["time"]), "open": float(r["open"]), "high": float(r["high"]), "low": float(r["low"]), "close": float(r["close"]), "tick_volume": int(r["tick_volume"]), "real_volume": int(r["real_volume"])} for r in rates], key=lambda row: row["time"])
     return {"symbol": resolved, "values": values}
 
@@ -584,7 +667,9 @@ def calculate(action: str, symbol: str, side: str, volume: float, price: float, 
             result = mt5.order_calc_margin(order_type, resolved, volume, price)
         if result is None:
             raise HTTPException(status_code=503, detail={"error": "CALCULATION_UNAVAILABLE", "last_error": _last_error()})
-        return {"value": float(result), "currency": _account_payload()["currency"], "symbol": resolved}
+        _ensure_connected()
+        info = _required(mt5.account_info(), "ACCOUNT_INFO_UNAVAILABLE")
+        return {"value": float(result), "currency": info.currency, "symbol": resolved}
 
 
 if __name__ == "__main__":
@@ -592,11 +677,26 @@ if __name__ == "__main__":
 
     print(f"CRT Terminal MT5 Local Bridge -> http://{HOST}:{PORT}")
     print("READ ONLY: no order_send endpoint is exposed.")
-    _server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, log_level="info", timeout_graceful_shutdown=5))
+    # Binding port 0 lets Windows allocate a private endpoint for each desktop
+    # session. The inherited endpoint file ties discovery to that exact owner.
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind((HOST, PORT))
+    listener.listen(128)
+    actual_port = listener.getsockname()[1]
+    endpoint_file = os.getenv("SMARTFLOW_BRIDGE_ENDPOINT_FILE")
+    if endpoint_file:
+        path = Path(endpoint_file)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"url": f"http://{HOST}:{actual_port}", "instance": _instance, "owner": OWNER, "protocol_version": PROTOCOL_VERSION}), encoding="utf-8")
+        temporary.replace(path)
+    _server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=actual_port, log_level="info", timeout_graceful_shutdown=5))
     try:
-        _server.run()
+        _server.run(sockets=[listener])
     finally:
         _closing.set()
+        listener.close()
+        if endpoint_file:
+            Path(endpoint_file).unlink(missing_ok=True)
         with _lock:
             mt5.shutdown()
         print("CRT Terminal: MT5 connection closed; bridge stopped.")

@@ -2,6 +2,7 @@ import type {
   AccountSnapshot, AlertEvent, AlertRule, MarketBar, MarketProfile, PendingOrder,
   Position, PriceLevel, SymbolSpec, TradePlan,
 } from '../domain/contracts'
+import { allocateTargetLots } from '../domain/targetAllocations'
 
 export type SizingResult = { volume: number; riskCash: number; lossAtStop: number; marginEstimate: number; cappedByMargin: boolean }
 
@@ -211,10 +212,11 @@ export const SessionEngine = {
       { id: 'new_york' as const, zone: 'America/New_York', start: 8, end: 17 },
     ]
     return specs.map((s) => {
-      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: s.zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now)
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: s.zone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now)
       const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? 0)
       const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? 0)
-      return { id: s.id, open: hour >= s.start && hour < s.end, localTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` }
+      const weekday = parts.find(p => p.type === 'weekday')?.value
+      return { id: s.id, open: weekday !== 'Sat' && weekday !== 'Sun' && hour >= s.start && hour < s.end, localTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` }
     })
   },
 }
@@ -413,11 +415,12 @@ export function planRisk(plan: TradePlan, spec: SymbolSpec, equity: number) {
   const targetCount = plan.takeProfits.length
   const configuredAllocations = plan.takeProfitAllocations
   const allocationTotal = configuredAllocations?.slice(0, targetCount).reduce((sum, allocation) => sum + Math.max(0, allocation), 0) ?? 0
-  const rewardPerLot = plan.takeProfits.reduce((sum, price, index) => {
-    const weight = allocationTotal > 0 ? Math.max(0, configuredAllocations?.[index] ?? 0) / allocationTotal : 1 / Math.max(1, targetCount)
-    return sum + Math.abs(price - plan.entry) / (spec.tickSize || 1) * (spec.tickValueProfit ?? spec.tickValue) * weight
+  const lots = allocateTargetLots(plan.volume, plan.takeProfits.map((_, index) => allocationTotal > 0 ? Math.max(0, configuredAllocations?.[index] ?? 0) / allocationTotal * 100 : 100 / Math.max(1, targetCount)), plan.takeProfits.map(price => Number.isFinite(price) && price > 0), spec.volumeStep)
+  const rewardCash = plan.takeProfits.reduce((sum, price, index) => {
+    const distance = plan.side === 'long' ? price - plan.entry : plan.entry - price
+    return sum + Math.max(0, distance) / (spec.tickSize || 1) * (spec.tickValueProfit ?? spec.tickValue) * lots[index]
   }, 0)
-  return { ...sizing, volume: plan.volume, lossAtStop: lossPerLot * plan.volume, rewardCash: rewardPerLot * plan.volume, riskCash: lossPerLot * plan.volume, rewardRisk: lossPerLot > 0 ? rewardPerLot / lossPerLot : 0 }
+  return { ...sizing, volume: plan.volume, lossAtStop: lossPerLot * plan.volume, rewardCash, riskCash: lossPerLot * plan.volume, rewardRisk: lossPerLot * plan.volume > 0 ? rewardCash / (lossPerLot * plan.volume) : 0 }
 }
 
 export type EngineInput = { account: AccountSnapshot; positions: Position[]; orders: PendingOrder[]; specs: Record<string, SymbolSpec> }

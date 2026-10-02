@@ -8,6 +8,7 @@ on:
       - '.github/workflows/build-windows-installer.yml'
       - '.github/workflows/crt-terminal-ci.yml'
       - 'src/**'
+      - 'public/**'
       - 'src-tauri/**'
       - 'mt5-bridge/**'
       - 'package.json'

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { isMt5BridgeReady } from './bridgeStartup'
+import { readMt5BridgeReadiness } from './bridgeStartup'
 import './startup-gate.css'
 
 const SESSION_KEY = 'smartflow-x:startup-ready:v1'
@@ -55,13 +55,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
     let timer = 0
     const check = async () => {
       setChecking(true)
-      const ready = await isMt5BridgeReady()
+      const { ready, message } = await readMt5BridgeReadiness()
       if (dead) return
       const startupMessage = ready ? '' : await readBridgeStartupMessage()
       if (dead) return
       setChecking(false)
       setBridgeReady(ready)
-      setBridgeStartupMessage(startupMessage)
+      setBridgeStartupMessage([message, startupMessage].filter(Boolean).join(' · '))
       if (ready) setPhase(STATUS_LINES.length)
       else { setPhase(2); timer = window.setTimeout(check, 1200) }
     }

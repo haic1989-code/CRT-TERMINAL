@@ -147,3 +147,33 @@
 .sf-matrix.dragon-motion-paused .matrix-command-deck *,.sf-matrix.dragon-motion-paused .matrix-command-deck *::after { animation-play-state:paused; }
 @media(max-width:1600px) { .sf-matrix .matrix-command-deck { padding:20px 16px; font-size:12px; } .sf-matrix .matrix-command-deck .identity { flex-direction:column; gap:13px; } .sf-matrix .matrix-command-deck .appearance-controls { align-self:flex-end; } .sf-matrix .matrix-command-deck .pair-grid { column-gap:16px; } }
 @media(max-width:700px) { .sf-matrix .matrix-command-deck { font-size:14px; } }
+
+/* Accepted blue CRT glass console. Static optics, no scanning or parallax. */
+.sf-matrix .sf-right-column.matrix-text-column{background:radial-gradient(ellipse at 48% 37%,#17476c 0%,#103252 43%,#071b32 86%);border:1px solid #4e7390;border-radius:10px;box-shadow:inset 0 0 50px 15px #02091499,inset 0 1px 2px #c0e8ff55;position:relative;isolation:isolate;overflow:auto;}
+.sf-matrix .matrix-command-deck{--ink:#d3edec;--dim:#a0bccd;--cyan:#9debd1;--violet:#9debd1;--green:#79ecaa;--red:#ef94a2;--amber:#e4c58b;padding:24px 26px;}
+.sf-matrix .matrix-command-deck::before,.sf-matrix .matrix-command-deck::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:10px;}
+.sf-matrix .matrix-command-deck::before{z-index:-1;background:radial-gradient(ellipse at 46% 0%,#b8dbff24,transparent 42%),linear-gradient(115deg,#c3e4ff12,transparent 30%,transparent 69%,#6aaddb10);box-shadow:inset 0 0 80px 18px #0007;}
+.sf-matrix .matrix-command-deck::after{z-index:3;opacity:.09;background:repeating-linear-gradient(0deg,#010914 0px,#010914 1px,transparent 1px,transparent 4px);}
+.sf-matrix .matrix-command-deck .identity{align-items:flex-start;flex-direction:column;gap:12px;margin-bottom:20px;}
+.sf-matrix .matrix-command-deck .deck-brand small{display:block;color:var(--dim);font-size:11px;letter-spacing:.16em;}
+.sf-matrix .matrix-command-deck .deck-brand strong{display:block;color:var(--cyan);font-size:20px;font-weight:500;}
+.sf-matrix .matrix-command-deck .deck-effects{width:100%;font-size:12px;}
+.sf-matrix .matrix-command-deck .deck-effects summary{color:var(--dim);padding:7px 0;cursor:pointer;}
+.sf-matrix .matrix-command-deck .deck-effects .appearance-controls{padding:12px;background:#0b2540;border:1px solid #315575;width:100%;}
+.sf-matrix .matrix-command-deck .demo-previews{display:grid;gap:6px;margin-top:12px;border-top:1px solid #315575;padding-top:10px;}
+.sf-matrix .matrix-command-deck .demo-previews small{font-size:11px;color:var(--dim);white-space:normal;}
+.sf-matrix .matrix-command-deck section{padding-top:18px;margin-bottom:22px;border-top:1px solid #315575;}
+.sf-matrix .matrix-command-deck h3,.sf-matrix .matrix-command-deck h3::after,.sf-matrix .matrix-command-deck .status,.sf-matrix .matrix-command-deck .active{animation:none;color:var(--cyan);}
+.sf-matrix .matrix-command-deck section{--section-color:var(--cyan)!important;--label-color:var(--ink)!important;}
+.sf-matrix .matrix-command-deck .pair-grid{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:20px;}
+.sf-matrix .matrix-command-deck .item{display:grid;grid-template-columns:minmax(0,1fr) 6ch;gap:8px;min-height:32px;white-space:normal;}
+.sf-matrix .matrix-command-deck .item>.status{justify-self:end;color:var(--dim);}
+.sf-matrix .matrix-command-deck .item>.status-on{color:var(--green);}
+.sf-matrix .matrix-command-deck .context-item{grid-template-columns:3ch 46px minmax(0,1fr);white-space:nowrap;font-size:12px;}
+.sf-matrix .matrix-command-deck .context-item>span:last-child{justify-self:end;}
+.sf-matrix .matrix-command-deck .direction-bar{width:46px;min-width:46px;height:6px;gap:3px;}
+.sf-matrix .matrix-command-deck .deck-planner{padding:16px;background:#0b2540;border:1px solid #315575;}
+.sf-matrix .matrix-command-deck .deck-planner h3{color:var(--amber);}
+.sf-matrix .matrix-command-deck .targets button{border:1px solid #315575;padding:8px 5px;}
+@media(max-width:1600px){.sf-matrix .matrix-command-deck{padding:20px 16px}.sf-matrix .matrix-command-deck .pair-grid{column-gap:12px}.sf-matrix .matrix-command-deck .context-item{grid-template-columns:3ch 36px minmax(0,1fr);gap:5px}.sf-matrix .matrix-command-deck .direction-bar{width:36px;min-width:36px}}
+@media(max-width:1150px){.sf-matrix .matrix-command-deck .pair-grid{grid-template-columns:1fr}}

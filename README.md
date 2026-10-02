@@ -5,19 +5,21 @@ Read-only local market terminal, prepared for its Windows desktop shell. The Rea
 ## Aplikacja Windows
 
 `npm run app:dev` uruchamia CRT Terminal w natywnym oknie Tauri. `npm run app:build`
-tworzy instalatory MSI i NSIS EXE. Aplikacja sprawdza lokalny most MT5, a gdy go
-nie wykryje, uruchamia dołączony skrypt `mt5-bridge/start.ps1` w tle. Pierwsze
-uruchomienie mostu wymaga lokalnego Pythona; brakujące pakiety skrypt pobierze
-z PyPI z użyciem `mt5-bridge/requirements.txt`. Środowisko Pythona zapisuje się
+tworzy instalatory MSI i NSIS EXE. Każda sesja aplikacji uruchamia własny most MT5
+przez dołączony skrypt `mt5-bridge/start.ps1` w tle, na prywatnym porcie localhost.
+Nie przejmuje mostu poprzedniej instalacji. Wymagany jest lokalny Python 3.13 x64;
+przypięte pakiety są instalowane z dołączonego zestawu offline. Środowisko zapisuje się
 w katalogu danych użytkownika, nie w chronionym folderze instalacji. MetaTrader
 5 musi być uruchomiony i zalogowany.
+Zmiana konta lub instalacji MT5 wymaga ponownego otwarcia CRT Terminal.
+Opcjonalny `MT5_TERMINAL_PATH` wskazuje dokładny plik EXE terminalu MT5.
 Zamknięcie okna pokazuje ekran wyłączania, zatrzymuje most z potwierdzeniem i
 zamyka aplikację po zakończeniu sekwencji.
 This repository starts from a clean slate; it does not contain or inherit AKARI code.
 
 ## Aktualny stan — Matrix terminal
 
-Domyślny widok to zielony Matrix z hologramem agentki DESIGN V2 w tle żywego
+Domyślny widok to zielony Matrix ze statyczną agentką w tle żywego
 wykresu. Wykres, planner, wskaźniki, rysowanie, Market Context i Risk Guard
 pozostają aktywnymi komponentami React. Dane pochodzą z lokalnego mostka MT5.
 Poziomy wybiera się w konsoli CRT na wykresie. Integracja lokalnego modelu i
@@ -33,7 +35,7 @@ Odzyskano również poprawkę TPO Market Profile opisaną w `MARKET_PROFILE_FIX.
    poczeka na health check, uruchomi lokalny terminal Matrix i otworzy
    `http://127.0.0.1:5173/`. Adres można nadpisać zmienną `SMARTFLOW_PREVIEW_URL`.
 
-Wymagany jest Python x64 dostępny jako `py` lub `python`. Przy pierwszym
+Wymagany jest Python 3.13 x64 dostępny jako `py` lub `python`. Przy pierwszym
 uruchomieniu bridge sam utworzy środowisko i zainstaluje wymagane pakiety.
 Obejście ExecutionPolicy dotyczy wyłącznie uruchomionego procesu PowerShell.
 Zostaw MT5 uruchomiony. Bridge i terminal działają w tle. Logi lokalnego

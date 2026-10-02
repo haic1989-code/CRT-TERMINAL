@@ -45,8 +45,14 @@ try {
             Select-Object -First 1
         if (-not $candidate) { continue }
         $candidateArgs = if ($candidateName -eq 'py') { @('-3.13') } else { @() }
-        $versionOutput = & $candidate.Source @candidateArgs --version 2>&1
-        if ($LASTEXITCODE -eq 0 -and ($versionOutput -join ' ') -match 'Python 3\.13\.') {
+        # A broken launcher may write stderr; it must not abort candidate discovery.
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $versionOutput = & $candidate.Source @candidateArgs -c 'import sys; print(sys.version_info.major, sys.version_info.minor, sys.maxsize > 2**32)' 2>&1
+            $probeExitCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $previousPreference }
+        if ($probeExitCode -eq 0 -and ($versionOutput -join ' ').Trim() -eq '3 13 True') {
             $pythonSource = $candidate.Source
             $pythonArgs = $candidateArgs
             break
@@ -62,6 +68,12 @@ try {
     $requirementsFile = [System.IO.Path]::Combine($BridgeRoot, 'requirements.txt')
     $wheelhouseDirectory = [System.IO.Path]::Combine($BridgeRoot, 'wheelhouse')
     $bridgeFile = [System.IO.Path]::Combine($BridgeRoot, 'bridge.py')
+    # Serialize creation/pip access to the shared venv across application windows.
+    $setupMutex = [System.Threading.Mutex]::new($false, 'Local\CRTTerminalBridgeSetupV2')
+    $setupLocked = $false
+    try {
+        try { $setupLocked = $setupMutex.WaitOne(120000) } catch [System.Threading.AbandonedMutexException] { $setupLocked = $true }
+        if (-not $setupLocked) { throw 'Przekroczono czas oczekiwania na przygotowanie srodowiska mostu.' }
 
     if (-not [System.IO.Directory]::Exists($wheelhouseDirectory)) {
         throw ('Brakuje lokalnych pakietów mostu: ' + $wheelhouseDirectory)
@@ -69,11 +81,13 @@ try {
 
     $venvVersion = $null
     if ([System.IO.File]::Exists($venvPython)) {
-        $venvVersion = & $venvPython -c 'import sys; print(".".join(map(str, sys.version_info[:2])))' 2>$null
+        $ErrorActionPreference = 'Continue'
+        $venvVersion = & $venvPython -c 'import sys; print(sys.version_info.major, sys.version_info.minor, sys.maxsize > 2**32)' 2>$null
         if ($LASTEXITCODE -ne 0) { $venvVersion = $null }
+        $ErrorActionPreference = 'Stop'
     }
 
-    if (-not [System.IO.File]::Exists($venvPython) -or $venvVersion -ne '3.13') {
+    if (-not [System.IO.File]::Exists($venvPython) -or $venvVersion -ne '3 13 True') {
         Write-BridgeStartupStatus 'starting' 'Przygotowuje lokalne srodowisko Python 3.13.'
         Write-Host 'Tworze srodowisko Python .venv...' -ForegroundColor Yellow
         & $pythonSource @pythonArgs -m venv --clear $venvDirectory
@@ -85,8 +99,10 @@ try {
 
     Write-BridgeStartupStatus 'starting' 'Weryfikuje przypiete pakiety z lokalnego zestawu, bez dostepu do sieci.'
     Write-Host 'Weryfikuje lokalne pakiety MT5 Bridge...' -ForegroundColor Yellow
+    $ErrorActionPreference = 'Continue'
     $pipOutput = & $venvPython -m pip install --disable-pip-version-check --no-input --no-index --find-links $wheelhouseDirectory -r $requirementsFile 2>&1
     $pipExitCode = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
     if ($pipExitCode -ne 0) {
         $pipDetails = ($pipOutput | Select-Object -Last 8) -join ' | '
         throw ('Nie udalo sie przygotowac lokalnych pakietow mostu (kod ' + $pipExitCode + '). ' + $pipDetails)
@@ -97,26 +113,43 @@ try {
     if ($verifyExitCode -ne 0) {
         throw ('Weryfikacja pakietow Python nie powiodla sie (kod ' + $verifyExitCode + ').')
     }
+    } finally {
+        if ($setupLocked) { $setupMutex.ReleaseMutex() }
+        $setupMutex.Dispose()
+    }
 
     Write-Host ''
     Write-Host 'Uruchamiam CRT Terminal MT5 Local Bridge...' -ForegroundColor Cyan
     Write-Host 'MT5 powinien byc uruchomiony i zalogowany na konto brokerskie.' -ForegroundColor Yellow
-    Write-Host 'Adres: http://127.0.0.1:8765/v1/health' -ForegroundColor Green
+    Write-Host 'Aplikacja odczyta adres prywatnej sesji mostu.' -ForegroundColor Green
     Write-Host ''
 
     Write-BridgeStartupStatus 'starting' 'Uruchamiam bridge Python i health endpoint.'
-    & $venvPython $bridgeFile
+    if ($env:SMARTFLOW_BRIDGE_ENDPOINT_FILE) {
+        $bridgeLog = [System.IO.Path]::ChangeExtension($env:SMARTFLOW_BRIDGE_ENDPOINT_FILE, '.log')
+        # Log native stderr without PowerShell treating normal uvicorn logs as errors.
+        $ErrorActionPreference = 'Continue'
+        & $venvPython $bridgeFile *> $bridgeLog
+        $ErrorActionPreference = 'Stop'
+    } else {
+        $ErrorActionPreference = 'Continue'
+        & $venvPython $bridgeFile
+        $ErrorActionPreference = 'Stop'
+    }
     $bridgeExitCode = $LASTEXITCODE
-    if ($bridgeExitCode -ne 0) { throw ('Proces bridge zakonczyl sie nieoczekiwanie (kod ' + $bridgeExitCode + ').') }
+    if ($bridgeExitCode -ne 0) {
+        $bridgeDetails = if ($bridgeLog -and [System.IO.File]::Exists($bridgeLog)) { (Get-Content -LiteralPath $bridgeLog -Tail 8) -join ' | ' } else { '' }
+        throw ('Proces bridge zakonczyl sie nieoczekiwanie (kod ' + $bridgeExitCode + '). ' + $bridgeDetails)
+    }
     Write-BridgeStartupStatus 'stopped' 'Most i polaczenie MT5 zostaly zamkniete.'
     Write-Host 'BYE ADMIN! Bridge zatrzymany.' -ForegroundColor Green
 } catch {
     $line = $_.InvocationInfo.ScriptLineNumber
-    $command = $_.InvocationInfo.Line.Trim()
+    $command = ([string]$_.InvocationInfo.Line).Trim()
     $message = "Linia $line ($command): $($_.Exception.Message)"
     Write-BridgeStartupStatus 'error' $message
     Write-Host ''
     Write-Host ('BLAD: ' + $message) -ForegroundColor Red
-    Write-Host 'Pozostawiam komunikat w osobnym oknie PowerShell.' -ForegroundColor Yellow
+    Write-Host 'Szczegoly bledu sa dostepne w diagnostyce uruchamiania aplikacji.' -ForegroundColor Yellow
     throw
 }

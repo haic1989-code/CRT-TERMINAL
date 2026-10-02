@@ -58,8 +58,12 @@
 .sf-matrix .crt-range-scan { position:absolute; z-index:9; inset:13% 7% 14% 2%; border:1px solid #56ff9a55; pointer-events:none; overflow:hidden; box-shadow:inset 0 0 22px #2dff7520; }
 .sf-matrix .crt-range-scan-beam { position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,#a8ffbd,#ecfff0,transparent); box-shadow:0 0 12px 3px #66ff9c80; animation:crt-range-sweep 1.2s linear forwards; }
 .sf-matrix .crt-range-scan.is-detected { border-color:#c6ffd4; box-shadow:inset 0 0 34px #4eff7535,0 0 20px #64ff9a65; animation:crt-range-detected .5s ease-in-out 3; }
-.sf-matrix .crt-range-scan.is-detected::after { content:"Wybicie wykryte"; position:absolute; top:6px; right:8px; padding:3px 6px; color:#d8ffe2; background:#031409d9; border:1px solid #91ffad; font:10px/1.2 Consolas,monospace; letter-spacing:.04em; text-shadow:0 0 8px #61ff91; }
-@keyframes crt-range-sweep { to{transform:translateY(5200%)} }
+.sf-matrix .crt-range-scan-label {position:absolute;top:6px;right:8px;left:8px;text-align:right;color:#d8ffe2;background:#031409d9;padding:4px;font:11px/1.4 Consolas,monospace;}
+.sf-matrix .crt-phosphor-pulse{animation-duration:.65s;}
+.sf-matrix .crt-phosphor-pulse::before{width:12px;left:-13px;animation-duration:.65s;box-shadow:0 0 4px #8affb4;}
+.sf-matrix .crt-phosphor-pulse i{width:10px;height:10px;left:-5px;top:-5px;animation-duration:.65s;box-shadow:0 0 5px #86ffad;}
+.sf-matrix .crt-phosphor-pulse b{width:3px;height:3px;box-shadow:0 0 6px 1px #69ff9b;}
+@keyframes crt-range-sweep { to{top:calc(100% - 2px)} }
 @keyframes crt-range-detected { 50%{border-color:#fff;box-shadow:inset 0 0 40px #6aff9044,0 0 28px #b6ffc588} }
 
 /* Floating-period prompt used by the SMA / EMA command buttons. */

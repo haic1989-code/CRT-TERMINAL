@@ -1,6 +1,6 @@
 [package]
 name = "crt-terminal"
-version = "0.1.6"
+version = "0.1.9"
 description = "CRT Terminal desktop app"
 authors = ["CRT Terminal"]
 edition = "2021"
@@ -14,3 +14,4 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+serde_json = "1"

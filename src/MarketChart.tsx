@@ -13,7 +13,7 @@ import {
   type Logical,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import { fetchMt5Bars, fetchMt5Snapshot, type Mt5Account, type Mt5SymbolInfo } from './mt5Client'
+import { fetchMt5Bars, type Mt5Account, type Mt5SymbolInfo } from './mt5Client'
 import { vwapPresentation } from './indicators/vwapPresentation'
 import { drawingLogicalAtTime, drawingTimeAtLogical, fibonacciRetracementPrice } from './domain/drawingGeometry'
 import { PositionPlannerPrimitive, plannerLogicalToCoordinate, type PlannerPrimitiveHit } from './positionPlannerPrimitive'
@@ -529,22 +529,11 @@ export function MarketChart({
   useEffect(() => () => { if (drawingMoveFrameRef.current !== null) window.cancelAnimationFrame(drawingMoveFrameRef.current) }, [])
   const liveHistoryRef = useRef<CandlestickData<UTCTimestamp>[]>([])
   const [lastBar, setLastBar] = useState<CandlestickData<UTCTimestamp> | null>(null)
-  const [phosphorPulse, setPhosphorPulse] = useState<{ id: number; x: number; y: number } | null>(null)
+  const [phosphorPulse, setPhosphorPulse] = useState<{ id: number; time: UTCTimestamp; price: number } | null>(null)
+  const pulseElementRef = useRef<HTMLSpanElement>(null)
+  const previousCloseRef = useRef<number | null>(null)
+  const pulseSequenceRef = useRef(0)
   const handledTickId = useRef(0)
-  useEffect(() => {
-    if (!simulationTickId || simulationTickId === handledTickId.current) return
-    handledTickId.current = simulationTickId
-    const chart = chartRef.current
-    const candleSeries = candlesRef.current
-    const latest = currentBarRef.current ?? lastBar ?? data.at(-1)
-    if (!chart || !candleSeries || !latest) return
-    const x = chart.timeScale().timeToCoordinate(latest.time)
-    const y = candleSeries.priceToCoordinate(latest.close)
-    if (x === null || y === null) return
-    setPhosphorPulse({ id: simulationTickId, x, y })
-    const timer = window.setTimeout(() => setPhosphorPulse(current => current?.id === simulationTickId ? null : current), 1750)
-    return () => window.clearTimeout(timer)
-  }, [simulationTickId])
   const [planner, setPlanner] = useState<PlannerState | null>(null)
   const [plannerTime, setPlannerTime] = useState<PlannerTimeRange | null>(null)
   const [plannerSide, setPlannerSide] = useState<PlannerSide | null>(null)
@@ -691,6 +680,38 @@ export function MarketChart({
       fullSlLossLabel: plannerFullSlLossLabel ?? undefined,
     })
   }
+  useEffect(() => {
+    previousCloseRef.current = null
+    setPhosphorPulse(null)
+  }, [symbol, timeframe])
+  useEffect(() => {
+    if (!lastBar) { previousCloseRef.current = null; return }
+    const previous = previousCloseRef.current
+    previousCloseRef.current = lastBar.close
+    const demo = simulationTickId > handledTickId.current
+    handledTickId.current = simulationTickId
+    const changed = previous != null && previous !== lastBar.close && feed.status === 'live'
+    if ((!demo && !changed) || window.matchMedia('(prefers-reduced-motion: reduce)').matches || rootRef.current?.closest('.dragon-motion-paused')) return
+    setPhosphorPulse({ id: ++pulseSequenceRef.current, time: lastBar.time, price: lastBar.close })
+  }, [lastBar, simulationTickId, feed.status])
+  useEffect(() => {
+    if (!phosphorPulse) return
+    let frame = 0
+    const position = () => {
+      const element = pulseElementRef.current, chart = chartRef.current, series = candlesRef.current
+      if (element && chart && series) {
+        const x = chart.timeScale().timeToCoordinate(phosphorPulse.time)
+        const y = series.priceToCoordinate(phosphorPulse.price)
+        const visible = x != null && y != null && x >= 0 && x <= chart.timeScale().width() && y >= 0 && y < (rootRef.current?.clientHeight ?? 0)
+        element.style.visibility = visible ? 'visible' : 'hidden'
+        if (visible) { element.style.left = `${x}px`; element.style.top = `${y}px` }
+      }
+      frame = requestAnimationFrame(position)
+    }
+    frame = requestAnimationFrame(position)
+    const timer = window.setTimeout(() => setPhosphorPulse(current => current?.id === phosphorPulse.id ? null : current), 700)
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer) }
+  }, [phosphorPulse])
   // Chart listeners and the MT5 polling loop outlive a React render. Always have
   // them use the latest planner labels instead of restoring a stale FULL TP caption.
   syncPlannerPrimitiveRef.current = syncPlannerPrimitive
@@ -736,10 +757,8 @@ export function MarketChart({
         const newest = candles[candles.length - 1]
         const tickTimeMs = payload.tick.time_msc || payload.tick.time * 1000
         const quoteAgeMs = Math.max(0, Date.now() - tickTimeMs)
-        const dayUtc = new Date().getUTCDay()
-        const weekend = dayUtc === 0 || dayUtc === 6
         const status: MarketFeedStatus =
-          quoteAgeMs <= 15000 ? 'live' : weekend ? 'closed' : quoteAgeMs <= 120000 ? 'history' : 'stale'
+          quoteAgeMs <= 15000 ? 'live' : quoteAgeMs <= 120000 ? 'history' : 'stale'
 
         liveHistoryRef.current = candles
         setData(candles)
@@ -755,13 +774,11 @@ export function MarketChart({
           symbol: payload.symbol,
           account: payload.account,
           symbolInfo: payload.symbol_info,
-          lastPrice: payload.tick.mid,
+          lastPrice: payload.symbol_info.chart_mode === 1 ? payload.tick.last : payload.tick.bid,
           bid: payload.tick.bid,
           ask: payload.tick.ask,
           message:
-            status === 'closed'
-              ? 'MT5 połączony. Rynek nie dostarcza aktualnego ticka.'
-              : status === 'stale'
+            status === 'stale'
                 ? 'MT5 połączony, ale ostatni tick jest nieaktualny.'
                 : undefined,
         })
@@ -1011,44 +1028,7 @@ export function MarketChart({
 
   useEffect(() => { volumeSeriesRef.current?.applyOptions({ visible: volumeVisible }) }, [volumeVisible, data])
 
-  useEffect(() => {
-    if (!data.length) return
-    let disposed = false
-    let timer: number | null = null
-    const refreshRecentVolumes = async () => {
-      try {
-        const payload = await fetchMt5Bars(timeframe, 100, undefined, symbol)
-        if (disposed) return
-        const merged = new Map(volumeDataRef.current.map((item) => [Number(item.time), item]))
-        for (const bar of payload.values) {
-          merged.set(bar.time, {
-            time: bar.time as UTCTimestamp,
-            value: Math.max(0, bar.tick_volume),
-            color: bar.close >= bar.open ? 'rgba(15, 211, 255, 0.62)' : 'rgba(255, 53, 166, 0.66)',
-          })
-        }
-        const finalBars = new Map(payload.values.map(bar => [bar.time, bar]))
-        liveHistoryRef.current = liveHistoryRef.current.map(bar => {
-          const finalized = finalBars.get(Number(bar.time))
-          return finalized && Number(bar.time) < Number(currentBarRef.current?.time ?? 0)
-            ? { time: bar.time, open: finalized.open, high: finalized.high, low: finalized.low, close: finalized.close }
-            : bar
-        })
-        const next = [...merged.values()].sort((a, b) => Number(a.time) - Number(b.time))
-        volumeDataRef.current = next
-        setVolumeData(next)
-      } catch {
-        // A missed volume refresh leaves the last valid bar weights in place.
-      } finally {
-        if (!disposed) timer = window.setTimeout(refreshRecentVolumes, 5000)
-      }
-    }
-    timer = window.setTimeout(refreshRecentVolumes, 2000)
-    return () => {
-      disposed = true
-      if (timer !== null) window.clearTimeout(timer)
-    }
-  }, [data.length, timeframe, symbol])
+
 
   useEffect(() => {
     const chart = chartRef.current
@@ -1134,20 +1114,8 @@ export function MarketChart({
   useEffect(() => {
     if (!data.length || !lastBar || indicatorSeriesRef.current.length === 0) return
     const bars = getIndicatorBars(liveHistoryRef.current, lastBar, volumeDataRef.current)
-    const last = bars[bars.length - 1]
-    if (!last) return
     const calculatedById = new Map<IndicatorId, ReturnType<typeof calculateIndicatorSeries>>()
     for (const entry of indicatorSeriesRef.current) {
-      if (entry.id === 'VWAP') {
-        const activeSession = Math.floor(last.time / 86400)
-        let sessionStart = bars.length - 1
-        while (sessionStart > 0 && Math.floor(bars[sessionStart - 1].time / 86400) === activeSession) sessionStart -= 1
-        const sessionValues = calculateIndicatorSeries('VWAP', bars.slice(sessionStart))[0].values
-        const value = sessionValues[sessionValues.length - 1]
-        if (value !== null && value !== undefined && Number.isFinite(value)) entry.series.update({ time: last.time as UTCTimestamp, value })
-        continue
-      }
-
       let calculated = calculatedById.get(entry.id)
       if (!calculated) {
         const definition = indicatorDefinition(entry.id)
@@ -1155,10 +1123,12 @@ export function MarketChart({
         calculated = calculateIndicatorSeries(entry.id, bars, period)
         calculatedById.set(entry.id, calculated)
       }
-      const values = calculated.find((item) => item.key === entry.key)?.values
-      const value = values?.[values.length - 1]
-      if (value === null || value === undefined || !Number.isFinite(value)) continue
-      entry.series.update({ time: last.time as UTCTimestamp, value })
+      const values = calculated.find(item => item.key === entry.key)?.values ?? []
+      const points = bars.flatMap((bar, index) => {
+        const value = values[index]
+        return value != null && Number.isFinite(value) ? [{ time: bar.time as UTCTimestamp, value }] : []
+      })
+      entry.series.setData(entry.id === 'VWAP' ? vwapPresentation(points) : points)
     }
   }, [data, lastBar, indicators, indicatorSettings])
 
@@ -1249,60 +1219,41 @@ export function MarketChart({
 
     let disposed = false
     let timer: number | null = null
-    let lastTickMsc = 0
+    const controller = new AbortController()
+    let recovering = true
 
     const poll = async () => {
       try {
-        const payload = await fetchMt5Snapshot(undefined, symbol)
+        const payload = await fetchMt5Bars(timeframe, recovering ? 5000 : 100, controller.signal, symbol)
         if (disposed) return
 
         const tick = payload.tick
         const tickTimeMs = tick.time_msc || tick.time * 1000
         const quoteAgeMs = Math.max(0, Date.now() - tickTimeMs)
-        const dayUtc = new Date().getUTCDay()
-        const weekend = dayUtc === 0 || dayUtc === 6
         const status: MarketFeedStatus =
-          quoteAgeMs <= 15000 ? 'live' : weekend ? 'closed' : quoteAgeMs <= 120000 ? 'history' : 'stale'
+          quoteAgeMs <= 15000 ? 'live' : quoteAgeMs <= 120000 ? 'history' : 'stale'
 
-        if (tickTimeMs > lastTickMsc && Number.isFinite(tick.mid) && tick.mid > 0) {
-          lastTickMsc = tickTimeMs
-          const intervalSeconds = TIMEFRAME_MINUTES[timeframe] * 60
-          const tickSeconds = Math.floor(tickTimeMs / 1000)
-          const bucketTime = Math.floor(tickSeconds / intervalSeconds) * intervalSeconds
-          const current = currentBarRef.current
-          const isNewBar = !current || bucketTime > Number(current.time)
-          let next: CandlestickData<UTCTimestamp>
-
-          if (isNewBar) {
-            next = {
-              time: bucketTime as UTCTimestamp,
-              open: tick.mid,
-              high: tick.mid,
-              low: tick.mid,
-              close: tick.mid,
-            }
-          } else if (bucketTime === Number(current.time)) {
-            next = {
-              time: current.time,
-              open: current.open,
-              high: Math.max(current.high, tick.mid),
-              low: Math.min(current.low, tick.mid),
-              close: tick.mid,
-            }
-          } else {
-            next = current
-          }
-
-          if (next !== current) {
-            liveHistoryRef.current = mergeLatestBar(liveHistoryRef.current, next)
-            currentBarRef.current = next
-            candlesRef.current?.update(next)
-            setLastBar(next)
-            // shiftVisibleRangeOnNewBar already advances the viewport in AUTO mode.
-            // Calling scrollToRealTime here as well applied the same movement twice.
-            requestAnimationFrame(() => syncPlannerPrimitiveRef.current())
-          }
+        // Native MT5 bars are authoritative, including current-bar extrema.
+        const merged = new Map(liveHistoryRef.current.map(bar => [Number(bar.time), bar]))
+        const volumes = new Map(volumeDataRef.current.map(bar => [Number(bar.time), bar]))
+        for (const bar of payload.values) {
+          merged.set(bar.time, { time: bar.time as UTCTimestamp, open: bar.open, high: bar.high, low: bar.low, close: bar.close })
+          volumes.set(bar.time, { time: bar.time as UTCTimestamp, value: bar.tick_volume, color: bar.close >= bar.open ? 'rgba(15, 211, 255, 0.62)' : 'rgba(255, 53, 166, 0.66)' })
         }
+        const reconciled = [...merged.values()].sort((a, b) => Number(a.time) - Number(b.time))
+        const newest = reconciled.at(-1)
+        if (!newest) throw new Error('MT5 nie zwrócił świec.')
+        const range = chartRef.current?.timeScale().getVisibleLogicalRange()
+        liveHistoryRef.current = reconciled
+        candlesRef.current?.setData(reconciled)
+        if (range && !autoScrollRef.current) chartRef.current?.timeScale().setVisibleLogicalRange(range)
+        currentBarRef.current = newest
+        setLastBar(newest)
+        setLoadedBars(reconciled.length)
+        volumeDataRef.current = [...volumes.values()].sort((a, b) => Number(a.time) - Number(b.time))
+        setVolumeData(volumeDataRef.current)
+        recovering = false
+        requestAnimationFrame(() => syncPlannerPrimitiveRef.current())
 
         publishFeed({
           status,
@@ -1312,17 +1263,16 @@ export function MarketChart({
           symbol: payload.symbol,
           account: payload.account,
           symbolInfo: payload.symbol_info,
-          lastPrice: tick.mid,
+          lastPrice: payload.symbol_info.chart_mode === 1 ? tick.last : tick.bid,
           bid: tick.bid,
           ask: tick.ask,
           message:
-            status === 'closed'
-              ? 'MT5 połączony. Rynek nie dostarcza aktualnego ticka.'
-              : status === 'stale'
+            status === 'stale'
                 ? 'MT5 połączony, ale strumień ticków jest nieaktualny.'
                 : undefined,
         })
       } catch (error) {
+        recovering = true
         if (!disposed) {
           setFeed((current) => {
             const next: MarketFeedState = {
@@ -1337,7 +1287,7 @@ export function MarketChart({
           })
         }
       } finally {
-        if (!disposed) timer = window.setTimeout(poll, 500)
+        if (!disposed) timer = window.setTimeout(poll, recovering ? 2000 : 1000)
       }
     }
 
@@ -1345,6 +1295,7 @@ export function MarketChart({
 
     return () => {
       disposed = true
+      controller.abort()
       if (timer !== null) window.clearTimeout(timer)
     }
   }, [timeframe, data.length, symbol])
@@ -1877,8 +1828,8 @@ export function MarketChart({
       onPointerCancel={() => { drawingGestureRef.current = null; drawingSequenceRef.current = []; setDrawingAnchors([]); setDrawingCursor(null) }}
     >
       <div ref={containerRef} className="market-chart__canvas" />
-      {rangeScanId > 0 && <div key={`scan-${rangeScanId}`} className={`crt-range-scan${rangeScanDetected ? ' is-detected' : ''}`} style={scanRangeStyle} aria-hidden="true"><span className="crt-range-scan-beam" /></div>}
-      {phosphorPulse && <span key={phosphorPulse.id} className="crt-phosphor-pulse" style={{ left: phosphorPulse.x, top: phosphorPulse.y }} aria-hidden="true"><i /><b /></span>}
+      {rangeScanId > 0 && <div key={`scan-${rangeScanId}`} className={`crt-range-scan${rangeScanDetected ? ' is-detected' : ''}`} style={scanRangeStyle} aria-hidden="true"><span className="crt-range-scan-beam" /><span className="crt-range-scan-label">PODGLĄD ANIMACJI · BEZ ANALIZY WYBICIA</span></div>}
+      {phosphorPulse && <span key={phosphorPulse.id} className="crt-phosphor-pulse" ref={pulseElementRef} style={{visibility:"hidden"}} aria-hidden="true"><i /><b /></span>}
       <svg className="market-chart__drawing-overlay" data-testid="drawing-overlay" data-revision={drawingRevision} width="100%" height="100%" viewBox={'0 0 ' + (rootRef.current?.clientWidth || 1) + ' ' + (rootRef.current?.clientHeight || 1)} aria-label="Rysunki na wykresie">
         {vegaProposal && (() => {
           const candles = candlesRef.current

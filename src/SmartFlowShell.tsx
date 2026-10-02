@@ -125,7 +125,7 @@ export function SmartFlowShell() {
     if (!dragon || !rangeScan) return
     const detectTimer = window.setTimeout(() => {
       setRangeScan(current => current?.id === rangeScan.id ? { ...current, detected:true } : current)
-      notifyConsole('Wybicie wykryte')
+      notifyConsole('Podgląd skanu zakończony · bez analizy wybicia')
     }, 1250)
     const clearTimer = window.setTimeout(() => setRangeScan(current => current?.id === rangeScan.id ? null : current), 3900)
     return () => { window.clearTimeout(detectTimer); window.clearTimeout(clearTimer) }
@@ -183,6 +183,7 @@ export function SmartFlowShell() {
   const [profileEnabled, setProfileEnabled] = useState(!dragon)
   const [strengthLoading, setStrengthLoading] = useState(true)
   const [marginEstimate, setMarginEstimate] = useState<{ key: string; value: number } | null>(null)
+  const [brokerPlan, setBrokerPlan] = useState<{ key: string; fullTp: number; loss: number; targets: (number | null)[]; reward: number } | null>(null)
   const [marginPerLot, setMarginPerLot] = useState<{ key: string; value: number } | null>(null)
   const [toast, setToast] = useState('')
   const [clockNow, setClockNow] = useState(() => Date.now())
@@ -252,6 +253,8 @@ export function SmartFlowShell() {
           setPositions(p.value.values)
           setPositionsObservedAt(p.value.observed_at)
         }
+        if (p.status === 'rejected') setPositionsObservedAt(0)
+        if (o.status === 'rejected') setOrdersObservedAt(0)
         if (o.status === 'fulfilled') {
           setOrders(o.value.values)
           setOrdersObservedAt(o.value.observed_at)
@@ -417,11 +420,14 @@ export function SmartFlowShell() {
   const sizedPlan = planner && spec ? dragon ? manualLotSizing(plannerLot, planner.entry, planner.sl, spec, currentMarginPerLot ?? undefined) : PositionSizingEngine.calculate({ entry: planner.entry, stopLoss: planner.sl, riskPercent: plannerRisk, equity: accountDomain.equity, spec, marginPerLot: currentMarginPerLot ?? undefined, freeMargin: accountDomain.freeMargin }) : null
   const planTargets = planner ? [
     ...(plannerTargets.tp1 && planner.tp1 != null ? [{ price: planner.tp1, allocation: takeProfitAllocations[0] ?? 100 }] : []),
-    ...(plannerTargets.tp2 && planner.tp2 !== undefined ? [{ price: planner.tp2, allocation: takeProfitAllocations[1] ?? 0 }] : []),
-    ...(plannerTargets.tp3 && planner.tp3 !== undefined ? [{ price: planner.tp3, allocation: takeProfitAllocations[2] ?? 0 }] : []),
+    ...(plannerTargets.tp2 && planner.tp2 != null ? [{ price: planner.tp2, allocation: takeProfitAllocations[1] ?? 0 }] : []),
+    ...(plannerTargets.tp3 && planner.tp3 != null ? [{ price: planner.tp3, allocation: takeProfitAllocations[2] ?? 0 }] : []),
   ] : []
   const plan: TradePlan | null = planner ? { symbol: feed.symbol || symbol, side: planner.side, entry: planner.entry, stopLoss: planner.sl, takeProfits: planTargets.map((target) => target.price), takeProfitAllocations: planTargets.map((target) => target.allocation), breakEvenMode, breakEvenPrice: planner.breakEven, volume: sizedPlan?.volume ?? 0, riskPercent: dragon ? accountDomain.equity > 0 ? (sizedPlan?.riskCash ?? 0) / accountDomain.equity * 100 : Infinity : plannerRisk } : null
-  const metrics = plan && spec ? calculatePlanRisk(plan, spec, accountDomain.equity) : null
+  const brokerPlanKey = planner && sizedPlan?.volume ? JSON.stringify([feed.symbol || symbol, account?.login, account?.server, planner.side, planner.entry, planner.sl, planner.tp, planner.tp1, planner.tp2, planner.tp3, plannerTargets, takeProfitAllocations, sizedPlan.volume]) : ''
+  const currentBrokerPlan = brokerPlan?.key === brokerPlanKey && feed.status === 'live' ? brokerPlan : null
+  const localMetrics = plan && spec ? calculatePlanRisk(plan, spec, accountDomain.equity) : null
+  const metrics = localMetrics && currentBrokerPlan ? { ...localMetrics, lossAtStop: currentBrokerPlan.loss, riskCash: currentBrokerPlan.loss, rewardCash: currentBrokerPlan.reward, rewardRisk: currentBrokerPlan.loss > 0 ? currentBrokerPlan.reward / currentBrokerPlan.loss : 0 } : localMetrics
   const breakEvenRule = plan ? PlannerBreakEvenEngine.evaluate({ plan, reachedTargetCount: 0 }) : null
   const marginEstimateKey = planner && sizedPlan?.volume ? `${marginPerLotKey}|${sizedPlan.volume}` : ''
   const currentMarginEstimate = marginEstimate?.key === marginEstimateKey ? marginEstimate.value : null
@@ -627,29 +633,37 @@ export function SmartFlowShell() {
   }
   const candleTimer = formatCountdown(candleRemainingSeconds(timeframe, clockNow))
   const serverTime = formatMt5ServerTime(feed.lastTickAt)
-  const plannerTargetLots = allocateTargetLots(metrics?.volume ?? 0, takeProfitAllocations, [plannerTargets.tp1, plannerTargets.tp2, plannerTargets.tp3], symbolInfo?.volume_step ?? 0.01)
-  const plannerTargetProfitLabels = [planner?.tp1, planner?.tp2, planner?.tp3].map((targetPrice, index) => {
-    const tickSize = symbolInfo?.trade_tick_size || symbolInfo?.point || 0
-    const tickValue = symbolInfo?.trade_tick_value_profit || symbolInfo?.trade_tick_value || 0
-    const lots = plannerTargetLots[index] ?? 0
-    if (targetPrice == null || !planner || tickSize <= 0 || tickValue <= 0 || lots <= 0) return null
-    const favorableMove = planner.side === 'long' ? targetPrice - planner.entry : planner.entry - targetPrice
-    if (!(favorableMove > 0)) return null
-    return `+${money(favorableMove / tickSize * tickValue * lots, accountDomain.currency)}`
-  })
-  const plannerFullTpProfitLabel = (() => {
-    const targetPrice = planner?.tp
-    const tickSize = symbolInfo?.trade_tick_size || symbolInfo?.point || 0
-    const tickValue = symbolInfo?.trade_tick_value_profit || symbolInfo?.trade_tick_value || 0
-    const lots = metrics?.volume ?? 0
-    if (targetPrice == null || !planner || tickSize <= 0 || tickValue <= 0 || lots <= 0) return null
-    const favorableMove = planner.side === 'long' ? targetPrice - planner.entry : planner.entry - targetPrice
-    if (!(favorableMove > 0)) return null
-    return `+${money(favorableMove / tickSize * tickValue * lots, accountDomain.currency)}`
-  })()
-  const plannerFullSlLossLabel = metrics && Number.isFinite(metrics.riskCash) && metrics.riskCash > 0
-    ? `−${money(metrics.riskCash, accountDomain.currency)}`
-    : null
+  const plannerTargetLots = allocateTargetLots(metrics?.volume ?? 0, takeProfitAllocations, [plannerTargets.tp1 && planner?.tp1 != null, plannerTargets.tp2 && planner?.tp2 != null, plannerTargets.tp3 && planner?.tp3 != null], symbolInfo?.volume_step ?? 0.01)
+  useEffect(() => {
+    if (!planner || !sizedPlan?.volume || !brokerPlanKey || feed.status !== 'live') { setBrokerPlan(null); return }
+    const controller = new AbortController()
+    let dead = false
+    let timer = 0
+    const targetPrices = [planner.tp1, planner.tp2, planner.tp3]
+    const volume = sizedPlan.volume
+    const calculate = async () => {
+      try {
+        const request = (stop: number, lots: number) => fetchMt5Calculation({ action: 'profit', symbol: feed.symbol || symbol, side: planner.side === 'long' ? 'buy' : 'sell', volume: lots, price: planner.entry, stop }, controller.signal)
+        const [sl, fullTp, ...targets] = await Promise.all([
+          request(planner.sl, volume), request(planner.tp, volume),
+          ...targetPrices.map((price, index) => price != null && plannerTargetLots[index] > 0 ? request(price, plannerTargetLots[index]) : Promise.resolve(null)),
+        ])
+        if (dead) return
+        if ([sl, fullTp, ...targets].some(value => value && (value.symbol !== (feed.symbol || symbol) || value.currency !== accountDomain.currency))) throw new Error('Niezgodny instrument lub waluta kalkulacji MT5.')
+        setBrokerPlan({ key: brokerPlanKey, fullTp: fullTp.value, loss: Math.max(0, -sl.value), targets: targets.map(value => value?.value ?? null), reward: targets.reduce((sum, value) => sum + (value?.value ?? 0), 0) })
+      } catch {
+        if (!dead) setBrokerPlan(null)
+      } finally {
+        if (!dead) timer = window.setTimeout(calculate, 5000)
+      }
+    }
+    timer = window.setTimeout(calculate, 150)
+    return () => { dead = true; window.clearTimeout(timer); controller.abort() }
+  }, [brokerPlanKey, feed.status])
+  const signedProfit = (value: number | null | undefined) => value == null ? null : `${value < 0 ? '−' : '+'}${money(Math.abs(value), accountDomain.currency)}`
+  const plannerTargetProfitLabels = [0, 1, 2].map(index => signedProfit(currentBrokerPlan?.targets[index]))
+  const plannerFullTpProfitLabel = signedProfit(currentBrokerPlan?.fullTp)
+  const plannerFullSlLossLabel = currentBrokerPlan ? `−${money(currentBrokerPlan.loss, accountDomain.currency)}` : null
   useEffect(() => {
     setConsoleNotice(null)
     setDrawingRequest(null)
@@ -693,10 +707,7 @@ export function SmartFlowShell() {
             <button type="button" className={autoScrollEnabled ? 'is-active' : ''} aria-label="Automatyczne przewijanie" aria-pressed={autoScrollEnabled} onClick={() => setAutoScrollEnabled(value => !value)} title="Śledź najnowszą cenę">↧ <span>AUTO</span></button>
             <button type="button" className={chartShiftEnabled ? 'is-active' : ''} aria-label="Przesunięcie wykresu" aria-pressed={chartShiftEnabled} onClick={() => setChartShiftEnabled(value => !value)} title="Margines prawej strony">↤ <span>PRZESUŃ</span></button>
           </div>}
-          {dragon && <div className="crt-demo-controls" aria-label="Symulacje CRT">
-            <button type="button" onClick={() => { setSimulationTickId(id => id + 1); notifyConsole('NOWE NOTOWANIE · FOSFOR') }}>Symuluj nowe notowanie</button>
-            <button type="button" disabled={Boolean(rangeScan && !rangeScan.detected)} onClick={() => setRangeScan({id:++rangeScanSequence.current,detected:false})}>Skanuj zakres</button>
-          </div>}
+
           {dragon && <div className="dragon-clock">
             <span className={`dragon-clock-live ${feed.status === 'live' ? 'is-live' : 'is-offline'}`} aria-label={feed.status === 'live' ? 'MT5 na żywo' : `MT5 ${feed.status === 'error' ? 'niedostępny' : feed.status === 'connecting' ? 'łączenie' : feed.status === 'stale' ? 'nieaktualny' : feed.status === 'closed' ? 'zamknięty' : 'historia'}`}><i aria-hidden="true">›</i> MT5 <b>{feed.status === 'live' ? 'NA ŻYWO' : feed.status === 'error' ? 'NIEDOSTĘPNY' : feed.status === 'connecting' ? 'ŁĄCZENIE' : feed.status === 'stale' ? 'NIEAKTUALNY' : feed.status === 'closed' ? 'ZAMKNIĘTY' : 'HISTORIA'}</b></span>
             <span className="dragon-clock-candle"><i aria-hidden="true">◷</i> DO ŚWIECY <b>{candleTimer}</b></span>
@@ -727,6 +738,7 @@ export function SmartFlowShell() {
       </section>
       <aside className={dragon ? 'sf-right-column matrix-text-column' : 'sf-right-column'}>
         {dragon ? <MatrixCommandDeck
+          onPreviewPhosphor={() => setSimulationTickId(id => id + 1)} onPreviewScan={() => setRangeScan({id:++rangeScanSequence.current,detected:false})} scanRunning={Boolean(rangeScan)}
           symbol={feed.symbol || symbol} contextTimeframe={contextTimeframe} directions={mtfDirections} session={`${contextSummary.activeSession} · ${contextSummary.volatilityState}`}
           onContext={tf => setContextTimeframe(tf as ContextTimeframe)} levels={PRICE_LEVEL_GROUP_OPTIONS} activeLevels={priceLevelGroups} onLevel={togglePriceLevelGroup}
           indicators={selectedIndicator} settings={indicatorSettings} onPeriodRequest={id => setPeriodPrompt({indicator:id as 'SMA 20'|'EMA 50',token:++periodPromptSequence.current})}
@@ -744,7 +756,7 @@ export function SmartFlowShell() {
           <div className="dragon-planner-risk">
             <label htmlFor="dragon-risk-range"><span>RISK / TRADE</span><output>{plannerRisk.toFixed(1)}%</output></label>
             <input id="dragon-risk-range" aria-label="Ryzyko na transakcję" type="range" min="0.1" max="2" step="0.1" value={plannerRisk} style={{'--crt-fill': `${(plannerRisk - 0.1) / 1.9 * 100}%`} as CSSProperties} onChange={(event) => setPlannerRisk(Number(event.target.value))} />
-            <div className="dragon-planner-risk-profit"><span>STRATA PRZY SL <b>{plannerFullSlLossLabel ?? '—'}</b></span><span>ZYSK PRZY TP <b>{planTargets.length ? metrics && Number.isFinite(metrics.rewardCash) ? `+${money(metrics.rewardCash, account?.currency)}` : '—' : plannerFullTpProfitLabel ?? '—'}</b></span></div>
+            <div className="dragon-planner-risk-profit"><span>STRATA PRZY SL <b>{plannerFullSlLossLabel ?? '—'}</b></span><span>ZYSK PRZY TP <b>{planTargets.length ? signedProfit(currentBrokerPlan?.reward) ?? '—' : plannerFullTpProfitLabel ?? '—'}</b></span></div>
           </div>
           {planner ? <>
             <div className="dragon-target-selector" aria-label="Wybierz cel TP do ustawienia">{(['tp1', 'tp2', 'tp3'] as const).map((target) => <button key={target} type="button" aria-pressed={plannerTargets[target]} className={`${plannerTargets[target] ? 'is-active' : ''}${plannerLevelRequest?.target === target ? ' is-placing' : ''}`} onClick={() => selectPlannerTarget(target)}>{target.toUpperCase()}</button>)}</div>

@@ -1,3 +1,5 @@
+import { bridgeFetch } from './bridgeEndpoint'
+
 export const MT5_BRIDGE_URL =
   (import.meta.env.VITE_MT5_BRIDGE_URL as string | undefined)?.replace(/\/$/, '') ||
   'http://127.0.0.1:8765'
@@ -43,6 +45,7 @@ export type Mt5SymbolInfo = {
   currency_margin: string
   trade_mode: number
   visible: boolean
+  chart_mode?: number
 }
 
 export type Mt5Tick = {
@@ -110,7 +113,7 @@ async function localFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
 
   let response: Response
   try {
-    response = await fetch(`${MT5_BRIDGE_URL}${path}`, init)
+    response = await bridgeFetch(path, init)
   } catch (error) {
     throw new Error(
       error instanceof Error
@@ -141,8 +144,42 @@ async function localFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
 
     throw new Error(message)
   }
-
+  validateResponse(path, payload)
   return payload as T
+}
+
+function validateResponse(path: string, payload: unknown): void {
+  const fail = () => { throw new Error('Most MT5 zwrócił nieprawidłowe dane. Odczyt odrzucony.') }
+  const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+  const numbers = (value: Record<string, unknown>, keys: string[]) => keys.every(key => typeof value[key] === 'number' && Number.isFinite(value[key]))
+  const validBar = (value: unknown) => object(value) && numbers(value, ['time', 'open', 'high', 'low', 'close', 'tick_volume']) && Number(value.time) > 0 && Number(value.low) <= Math.min(Number(value.open), Number(value.close)) && Number(value.high) >= Math.max(Number(value.open), Number(value.close)) && Number(value.low) > 0
+  if (!object(payload)) return fail()
+  const endpoint = path.split('?')[0]
+  if (endpoint === '/v1/bars' || endpoint === '/v1/snapshot') {
+    if (payload.source !== 'MT5' || typeof payload.symbol !== 'string' || !object(payload.tick) || !object(payload.account) || !object(payload.symbol_info)) return fail()
+    if (payload.tick.symbol !== payload.symbol || payload.symbol_info.symbol !== payload.symbol
+      || !numbers(payload.tick, ['time', 'time_msc', 'bid', 'ask', 'last', 'mid'])
+      || !numbers(payload.account, ['login', 'equity', 'margin_free', 'observed_at'])
+      || typeof payload.account.server !== 'string' || typeof payload.account.currency !== 'string'
+      || !numbers(payload.symbol_info, ['point', 'trade_tick_size', 'volume_step', 'volume_min', 'volume_max', 'chart_mode'])) return fail()
+    if (![0, 1].includes(Number(payload.symbol_info.chart_mode))) return fail()
+    const chartPrice = payload.symbol_info.chart_mode === 1 ? payload.tick.last : payload.tick.bid
+    if (!(Number(chartPrice) > 0)) return fail()
+    if (endpoint === '/v1/bars') {
+      const requestedTimeframe = new URLSearchParams(path.split('?')[1]).get('timeframe')
+      if (payload.timeframe !== requestedTimeframe || !Array.isArray(payload.values) || !payload.values.length || !payload.values.every(validBar)) return fail()
+      if (payload.values.some((bar, index, bars) => index > 0 && Number(bar.time) <= Number(bars[index - 1].time))) return fail()
+    }
+  }
+  if (endpoint === '/v1/positions' || endpoint === '/v1/orders') {
+    if (!numbers(payload, ['observed_at']) || !Array.isArray(payload.values)) return fail()
+    const keys = endpoint === '/v1/positions' ? ['ticket', 'volume', 'price_open', 'sl', 'tp', 'profit'] : ['ticket', 'volume_initial', 'price_open', 'sl', 'tp']
+    if (!payload.values.every(value => object(value) && typeof value.symbol === 'string' && numbers(value, keys))) return fail()
+  }
+  if (endpoint === '/v1/calculate' && !numbers(payload, ['value'])) return fail()
+  if (endpoint === '/v1/context-bars' || endpoint === '/v1/fx-bars') {
+    if (!object(payload.values) || !Object.values(payload.values).every(value => Array.isArray(value) && value.every(validBar))) return fail()
+  }
 }
 
 export function fetchMt5Bars(

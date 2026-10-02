@@ -1,30 +1,39 @@
 use std::{
-    net::{SocketAddr, TcpStream},
     process::{Child, Command, Stdio},
     sync::Mutex,
-    time::Duration,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{path::BaseDirectory, Manager};
 
-struct BridgeBootstrap(Mutex<Option<Child>>);
+struct BridgeBootstrap {
+    child: Mutex<Option<Child>>,
+    status_path: std::path::PathBuf,
+    endpoint_path: std::path::PathBuf,
+    owner: String,
+}
 
 #[tauri::command]
 fn read_bridge_startup_status(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let status_path = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Nie można wyznaczyć katalogu danych mostu: {error}"))?
-        .join("bridge-startup.json");
-    match std::fs::read_to_string(status_path) {
+    let bootstrap = app.state::<BridgeBootstrap>();
+    match std::fs::read_to_string(&bootstrap.status_path) {
         Ok(status) => Ok(Some(status)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!("Nie można odczytać statusu mostu: {error}")),
     }
 }
 
-fn bridge_is_listening() -> bool {
-    let address = SocketAddr::from(([127, 0, 0, 1], 8765));
-    TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
+#[tauri::command]
+fn read_bridge_endpoint(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let bootstrap = app.state::<BridgeBootstrap>();
+    let raw = std::fs::read_to_string(&bootstrap.endpoint_path)
+        .map_err(|_| "Most MT5 jeszcze się uruchamia.".to_string())?;
+    let endpoint: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    if endpoint["owner"].as_str() != Some(bootstrap.owner.as_str())
+        || endpoint["protocol_version"].as_u64() != Some(2)
+    {
+        return Err("Niezgodna sesja lub wersja mostu MT5.".to_string());
+    }
+    Ok(endpoint)
 }
 
 fn bridge_script(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -47,11 +56,7 @@ fn bridge_script(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|error| format!("Nie znaleziono skryptu mostu MT5: {error}"))
 }
 
-fn start_bridge(app: &tauri::AppHandle) -> Result<Option<Child>, String> {
-    if bridge_is_listening() {
-        return Ok(None);
-    }
-
+fn start_bridge(app: &tauri::AppHandle) -> Result<BridgeBootstrap, String> {
     let script = bridge_script(app)?;
     let app_data_dir = app
         .path()
@@ -59,8 +64,10 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<Option<Child>, String> {
         .map_err(|error| format!("Nie można wyznaczyć katalogu danych aplikacji: {error}"))?;
     std::fs::create_dir_all(&app_data_dir)
         .map_err(|error| format!("Nie można przygotować katalogu danych: {error}"))?;
-    let status_path = app_data_dir.join("bridge-startup.json");
-    let runtime_root = app_data_dir.join("mt5-bridge-runtime");
+    let owner = format!("{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos());
+    let status_path = app_data_dir.join(format!("bridge-startup-{owner}.json"));
+    let endpoint_path = app_data_dir.join(format!("bridge-endpoint-{owner}.json"));
+    let runtime_root = app_data_dir.join("mt5-bridge-runtime-v2");
 
     let mut command = Command::new("powershell.exe");
     command
@@ -74,9 +81,12 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<Option<Child>, String> {
         ])
         .arg(&script)
         .arg("-StartupStatusPath")
-        .arg(status_path)
+        .arg(&status_path)
         .arg("-RuntimeRoot")
         .arg(runtime_root)
+        .env("SMARTFLOW_MT5_PORT", "0")
+        .env("SMARTFLOW_BRIDGE_OWNER", &owner)
+        .env("SMARTFLOW_BRIDGE_ENDPOINT_FILE", &endpoint_path)
         // Packaged GUI apps can inherit a working directory that PowerShell
         // cannot map to a filesystem drive. The bridge script uses absolute
         // paths, but a valid cwd also makes PowerShell startup deterministic.
@@ -95,18 +105,16 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<Option<Child>, String> {
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    command
-        .spawn()
-        .map(Some)
-        .map_err(|error| format!("Nie udało się uruchomić mostu MT5: {error}"))
+    let child = command.spawn().map_err(|error| format!("Nie udało się uruchomić mostu MT5: {error}"))?;
+    Ok(BridgeBootstrap { child: Mutex::new(Some(child)), status_path, endpoint_path, owner })
 }
 
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![read_bridge_startup_status])
+        .invoke_handler(tauri::generate_handler![read_bridge_startup_status, read_bridge_endpoint])
         .setup(|app| {
             let child = start_bridge(app.handle()).map_err(std::io::Error::other)?;
-            app.manage(BridgeBootstrap(Mutex::new(child)));
+            app.manage(child);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -114,7 +122,7 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 if let Some(bootstrap) = app_handle.try_state::<BridgeBootstrap>() {
-                    if let Ok(mut child) = bootstrap.0.lock() {
+                    if let Ok(mut child) = bootstrap.child.lock() {
                         if let Some(mut process) = child.take() {
                             if process.try_wait().ok().flatten().is_none() {
                                 let pid = process.id().to_string();
@@ -126,6 +134,8 @@ pub fn run() {
                             }
                         }
                     }
+                    let _ = std::fs::remove_file(&bootstrap.endpoint_path);
+                    let _ = std::fs::remove_file(&bootstrap.status_path);
                 }
             }
         });

@@ -2,6 +2,13 @@
 
 Adapter tylko do odczytu między lokalnym MetaTrader 5 a CRT Terminal.
 
+Od 0.1.7 aplikacja desktopowa uruchamia własny most na porcie nadanym przez
+system. Sprawdza protokół 2, instancję i właściciela sesji. Ręczne uruchomienie
+opisane poniżej nadal używa portu 8765 i służy podglądowi przeglądarkowemu.
+Zmiana konta lub instalacji MT5 wymaga restartu aplikacji. Diagnostyka startu
+i log mostu są zapisywane osobno dla każdej sesji w lokalnym katalogu danych
+CRT Terminal. Błędy odczytu portfela nie są traktowane jak brak pozycji.
+
 ## Co czyta
 
 - aktualne konto MT5,
@@ -48,7 +55,9 @@ Powinien pojawić się JSON z `"ok": true`.
 
 Bridge automatycznie szuka wariantów typu `XAUUSD.a`, `XAUUSDm`, `GOLD`.
 
-Jeśli wybierze źle:
+Automatyczny wybór wymaga zgodnych metadanych walut i jednoznacznego wyniku.
+Przy kilku wariantach lub braku odpowiednika most zwraca błąd. Wybierz dokładną
+nazwę w interfejsie albo ustaw ją przed uruchomieniem:
 
 `$env:MT5_SYMBOL="XAUUSD.a"`
 
