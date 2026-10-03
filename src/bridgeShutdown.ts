@@ -23,7 +23,7 @@ export async function stopMt5Bridge(options: { allowUnavailable?: boolean } = {}
   const runtime=await runtimeResponse.json() as Runtime
   if(runtime.bridge!==BRIDGE_ID || runtime.protocol_version!==BRIDGE_PROTOCOL_VERSION || (endpoint.instance && (runtime.instance!==endpoint.instance || runtime.owner!==endpoint.owner)))throw new Error('Most nie należy do tej sesji lub ma niezgodną wersję.')
   if(!runtime.instance||!runtime.shutdown_token)throw new Error('Most nie obsługuje zamykania terminalu.')
-  const response=await bridgeRequest('/v1/shutdown',{method:'POST',headers:{'X-SmartFlow-Shutdown':runtime.shutdown_token},signal:AbortSignal.timeout(5000)})
+  const response=await bridgeRequest('/v1/shutdown',{method:'POST',headers:{'X-CRT-Terminal-Shutdown':runtime.shutdown_token},signal:AbortSignal.timeout(5000)})
   if(!response.ok)throw new Error(`Bridge shutdown HTTP ${response.status}`)
   const accepted=await response.json() as {accepted:boolean;instance:string}
   if(!accepted.accepted||accepted.instance!==runtime.instance)throw new Error('Most nie potwierdził żądania zamknięcia.')

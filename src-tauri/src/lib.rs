@@ -43,7 +43,7 @@ fn read_bridge_endpoint(app: tauri::AppHandle) -> Result<serde_json::Value, Stri
         .map_err(|_| "Most MT5 jeszcze się uruchamia.".to_string())?;
     let endpoint: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     if endpoint["owner"].as_str() != Some(bootstrap.owner.as_str())
-        || endpoint["protocol_version"].as_u64() != Some(3)
+        || endpoint["protocol_version"].as_u64() != Some(4)
     {
         return Err("Niezgodna sesja lub wersja mostu MT5.".to_string());
     }
@@ -103,9 +103,9 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<BridgeBootstrap, String> {
         .arg(&status_path)
         .arg("-RuntimeRoot")
         .arg(runtime_root)
-        .env("SMARTFLOW_MT5_PORT", "0")
-        .env("SMARTFLOW_BRIDGE_OWNER", &owner)
-        .env("SMARTFLOW_BRIDGE_ENDPOINT_FILE", &endpoint_path)
+        .env("CRT_TERMINAL_MT5_PORT", "0")
+        .env("CRT_TERMINAL_BRIDGE_OWNER", &owner)
+        .env("CRT_TERMINAL_BRIDGE_ENDPOINT_FILE", &endpoint_path)
         // Packaged GUI apps can inherit a working directory that PowerShell
         // cannot map to a filesystem drive. The bridge script uses absolute
         // paths, but a valid cwd also makes PowerShell startup deterministic.

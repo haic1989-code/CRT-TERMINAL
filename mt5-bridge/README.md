@@ -91,7 +91,9 @@ CORS dopuszcza dokładne originy lokalnego Vite i Tauri. Inne domeny są odrzuca
 dopóki nie dodasz ich jawnie. Dla pojedynczego preview ustaw przed uruchomieniem
 bridge'a:
 
-`$env:SMARTFLOW_ALLOWED_ORIGINS = 'https://dokladny-adres-preview.vercel.app'`
+`$env:CRT_TERMINAL_ALLOWED_ORIGINS = 'https://dokladny-adres-preview.vercel.app'`
+
+Konfiguracja mostu używa prefiksu `CRT_TERMINAL_*`. Dla zgodności wstecznej nadal przyjmowane są starsze aliasy `SMARTFLOW_MT5_PORT`, `SMARTFLOW_BRIDGE_OWNER`, `SMARTFLOW_BRIDGE_ENDPOINT_FILE` i `SMARTFLOW_ALLOWED_ORIGINS`.
 
 Origin musi być pełnym adresem `https://...` bez ścieżki i bez wildcardu.
 Nie ustawiaj ogólnych wpisów typu `*.vercel.app` ani `*.onrender.com`.

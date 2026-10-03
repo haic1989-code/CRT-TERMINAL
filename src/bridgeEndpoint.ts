@@ -1,5 +1,5 @@
-export const BRIDGE_PROTOCOL_VERSION = 3
-export const BRIDGE_ID = 'SMARTFLOW_X_MT5'
+export const BRIDGE_PROTOCOL_VERSION = 4
+export const BRIDGE_ID = 'CRT_TERMINAL_MT5'
 type Endpoint = { url: string; instance: string; owner: string; protocol_version: number; execution_token?: string }
 let endpoint: Endpoint | undefined
 

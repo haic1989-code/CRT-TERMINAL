@@ -125,8 +125,9 @@ try {
     Write-Host ''
 
     Write-BridgeStartupStatus 'starting' 'Uruchamiam most i sprawdzam połączenie z MT5.'
-    if ($env:SMARTFLOW_BRIDGE_ENDPOINT_FILE) {
-        $bridgeLog = [System.IO.Path]::ChangeExtension($env:SMARTFLOW_BRIDGE_ENDPOINT_FILE, '.log')
+    $endpointFile = if ($env:CRT_TERMINAL_BRIDGE_ENDPOINT_FILE) { $env:CRT_TERMINAL_BRIDGE_ENDPOINT_FILE } else { $env:SMARTFLOW_BRIDGE_ENDPOINT_FILE }
+    if ($endpointFile) {
+        $bridgeLog = [System.IO.Path]::ChangeExtension($endpointFile, '.log')
         # Log native stderr without PowerShell treating normal uvicorn logs as errors.
         $ErrorActionPreference = 'Continue'
         & $venvPython $bridgeFile *> $bridgeLog

@@ -30,7 +30,7 @@ Odzyskano również poprawkę TPO Market Profile opisaną w `MARKET_PROFILE_FIX.
 ## Szybki start — Windows
 
 1. Uruchom MetaTrader 5 i zaloguj się na konto brokerskie.
-2. W katalogu głównym projektu wykonaj **dwuklik `START_SMARTFLOW_X.cmd`**.
+2. W katalogu głównym projektu wykonaj **dwuklik `START_SMARTFLOW_X.cmd`**. Nazwa skryptu startowego pozostaje bez zmian dla zgodności z dotychczasowym sposobem uruchamiania.
 3. Starter sprawdzi MT5, uruchomi lokalny MT5 Bridge w osobnym oknie PowerShell,
    poczeka na health check, uruchomi lokalny terminal Matrix i otworzy
    `http://127.0.0.1:5173/`. Adres można nadpisać zmienną `SMARTFLOW_PREVIEW_URL`.
@@ -44,14 +44,16 @@ i zależności projektu zainstalowane poleceniem `npm ci`.
 
 Bridge nasłuchuje tylko na `127.0.0.1`. Ręcznie uruchomiony most przeglądarkowy przyjmuje wyłącznie odczyt; egzekucja wymaga własnej sesji desktopowej, prywatnego tokenu i konta DEMO. Domyślnie akceptuje lokalne originy deweloperskie.
 Dla konkretnego preview ustaw w tym samym środowisku
-`SMARTFLOW_PREVIEW_URL` oraz `SMARTFLOW_ALLOWED_ORIGINS` na pełny origin
+`SMARTFLOW_PREVIEW_URL` oraz `CRT_TERMINAL_ALLOWED_ORIGINS` na pełny origin
 preview (bez ścieżki i wildcardu). Przykład uruchomienia:
 
 ```powershell
 $env:SMARTFLOW_PREVIEW_URL = 'https://twoj-preview.vercel.app'
-$env:SMARTFLOW_ALLOWED_ORIGINS = 'https://twoj-preview.vercel.app'
+$env:CRT_TERMINAL_ALLOWED_ORIGINS = 'https://twoj-preview.vercel.app'
 .\START_SMARTFLOW_X.cmd
 ```
+
+Most MT5 używa identyfikatora protokołu `CRT_TERMINAL_MT5` i zmiennych `CRT_TERMINAL_*`. Starsze zmienne `SMARTFLOW_*` są nadal akceptowane jako aliasy zgodności.
 
 Szczegóły są w [`mt5-bridge/README.md`](mt5-bridge/README.md).
 

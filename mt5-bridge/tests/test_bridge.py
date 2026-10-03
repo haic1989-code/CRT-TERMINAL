@@ -223,7 +223,7 @@ class BridgeTests(unittest.TestCase):
         controller = types.SimpleNamespace(should_exit=False)
         with patch.object(bridge, "_server", controller):
             for origin, token in [("https://evil.example", bridge._shutdown_token), (None, bridge._shutdown_token), ("http://127.0.0.1:5173", "wrong")]:
-                request = types.SimpleNamespace(headers={"origin": origin, "x-smartflow-shutdown": token})
+                request = types.SimpleNamespace(headers={"origin": origin, "x-crt-terminal-shutdown": token})
                 with self.assertRaises(StubHTTPException) as error:
                     bridge.shutdown(request)
                 self.assertEqual(error.exception.status_code, 403)
@@ -231,7 +231,7 @@ class BridgeTests(unittest.TestCase):
                 self.assertFalse(bridge._closing.is_set())
 
     def test_shutdown_blocks_reconnect_and_requests_server_exit(self):
-        request = types.SimpleNamespace(headers={"origin": "http://127.0.0.1:5173", "x-smartflow-shutdown": bridge._shutdown_token})
+        request = types.SimpleNamespace(headers={"origin": "http://127.0.0.1:5173", "x-crt-terminal-shutdown": bridge._shutdown_token})
         controller = types.SimpleNamespace(should_exit=False)
         with patch.object(bridge, "_server", controller), patch.object(bridge.mt5, "initialize") as initialize:
             self.assertTrue(bridge.shutdown(request)["accepted"])

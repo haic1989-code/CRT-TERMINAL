@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BRIDGE_ID, BRIDGE_PROTOCOL_VERSION } from './bridgeEndpoint'
 import { stopMt5Bridge } from './bridgeShutdown'
-const runtime={instance:'instance-a',shutdown_token:'token-a',closing:false}
-const json=(value:unknown)=>new Response(JSON.stringify(value))
+const runtime={bridge:BRIDGE_ID,protocol_version:BRIDGE_PROTOCOL_VERSION,owner:'owner-a',instance:'instance-a',shutdown_token:'token-a',closing:false}
+const json=(value:unknown, status=200)=>new Response(JSON.stringify(value),{status,headers:{'X-CRT-Protocol':String(BRIDGE_PROTOCOL_VERSION),'X-CRT-Instance':String((value as {instance?:string}).instance??runtime.instance)}})
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals()})
 describe('bridge shutdown confirmation',()=>{
   it('confirms shutdown after the bridge accepts and exits its local listener',async()=>{
@@ -10,7 +11,7 @@ describe('bridge shutdown confirmation',()=>{
     await expect(stopMt5Bridge()).resolves.toBeUndefined()
   })
   it('rejects an incompatible old bridge without sending shutdown',async()=>{
-    const fetch=vi.fn().mockResolvedValue(new Response('',{status:404}));vi.stubGlobal('fetch',fetch)
+    const fetch=vi.fn().mockResolvedValue(json({},404));vi.stubGlobal('fetch',fetch)
     await expect(stopMt5Bridge()).rejects.toThrow('HTTP 404');expect(fetch).toHaveBeenCalledTimes(1)
   })
   it('lets the desktop close when bridge startup never opened its listener',async()=>{

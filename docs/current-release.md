@@ -1,8 +1,8 @@
-# CRT Terminal 0.1.20
+# CRT Terminal 0.1.21
 
-- Aktualizacja instaluje się w cichym trybie NSIS bez osobnego okna instalatora.
-- Konsola Luny pokazuje pobieranie, kontrolę podpisu, zatrzymanie mostu MT5 i przygotowanie ponownego uruchomienia.
-- Podczas podmiany plików aplikacja zamyka się na chwilę, a następnie uruchamia ponownie.
-- Instalacja nadal wymaga jawnego kliknięcia użytkownika.
+- Most MT5 otrzymuje spójną tożsamość `CRT_TERMINAL_MT5` i protokół v4 po stronie terminalu, aplikacji Tauri oraz bridge'a Python.
+- Nagłówki transportowe i wyłączania mostu używają prefiksu `X-CRT-Terminal-*`.
+- Zmienne środowiskowe mostu mają prefiks `CRT_TERMINAL_*`; starsze `SMARTFLOW_*` nadal działają jako aliasy zgodności.
+- Atrapy testowe startu i wyłączania odzwierciedlają uwierzytelnione odpowiedzi mostu.
 
-Weryfikacja przejścia pomiędzy opublikowanymi wydaniami i ocena zachowania aktualizatora w zainstalowanej aplikacji Windows wymagają ręcznej akceptacji. Nie wykonano żadnych operacji brokerskich.
+Aktualizacje nadal wymagają jawnego kliknięcia. Aplikacja zachowuje dotychczasowy identyfikator instalacji Windows, aby aktualizacja z poprzedniej wersji działała w tym samym miejscu. Weryfikacja instalacji na Windows i połączenia z działającym MT5 pozostaje ręczna. Nie wykonano żadnych operacji brokerskich.

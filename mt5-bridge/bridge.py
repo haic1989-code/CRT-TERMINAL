@@ -19,12 +19,12 @@ from fastapi.responses import JSONResponse
 from execution import ExecutionService
 
 HOST = "127.0.0.1"
-PORT = int(os.getenv("SMARTFLOW_MT5_PORT", "8765"))
+PORT = int(os.getenv("CRT_TERMINAL_MT5_PORT", os.getenv("SMARTFLOW_MT5_PORT", "8765")))
 TERMINAL_PATH = os.getenv("MT5_TERMINAL_PATH", "").strip() or None
 PREFERRED_SYMBOL = os.getenv("MT5_SYMBOL", "XAUUSD").strip() or "XAUUSD"
-PROTOCOL_VERSION = 3
-BRIDGE_ID = "SMARTFLOW_X_MT5"
-OWNER = os.getenv("SMARTFLOW_BRIDGE_OWNER", "manual")
+PROTOCOL_VERSION = 4
+BRIDGE_ID = "CRT_TERMINAL_MT5"
+OWNER = os.getenv("CRT_TERMINAL_BRIDGE_OWNER", os.getenv("SMARTFLOW_BRIDGE_OWNER", "manual"))
 _identity: tuple[int, str, str] | None = None
 _next_initialize = 0.0
 _daily_cache: tuple[float, Any] | None = None
@@ -41,7 +41,7 @@ DEFAULT_ALLOWED_ORIGINS = (
 
 
 def _build_allowed_origins(extra_origins: str | None = None) -> list[str]:
-    configured = os.getenv("SMARTFLOW_ALLOWED_ORIGINS", "") if extra_origins is None else extra_origins
+    configured = os.getenv("CRT_TERMINAL_ALLOWED_ORIGINS", os.getenv("SMARTFLOW_ALLOWED_ORIGINS", "")) if extra_origins is None else extra_origins
     origins = list(DEFAULT_ALLOWED_ORIGINS)
     for raw_origin in configured.split(","):
         origin = raw_origin.strip()
@@ -51,7 +51,7 @@ def _build_allowed_origins(extra_origins: str | None = None) -> list[str]:
         try:
             parsed.port
         except ValueError as error:
-            raise ValueError(f"Invalid SMARTFLOW_ALLOWED_ORIGINS entry: {origin!r}") from error
+            raise ValueError(f"Invalid CRT_TERMINAL_ALLOWED_ORIGINS entry: {origin!r}") from error
         canonical_origin = f"{parsed.scheme}://{parsed.netloc}"
         if (
             "*" in origin
@@ -65,7 +65,7 @@ def _build_allowed_origins(extra_origins: str | None = None) -> list[str]:
             or origin != canonical_origin
         ):
             raise ValueError(
-                "SMARTFLOW_ALLOWED_ORIGINS must contain exact HTTP(S) origins without paths or wildcards."
+                "CRT_TERMINAL_ALLOWED_ORIGINS must contain exact HTTP(S) origins without paths or wildcards."
             )
         origins.append(origin)
     return list(dict.fromkeys(origins))
@@ -119,7 +119,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["X-SmartFlow-MT5", "X-CRT-Protocol", "X-CRT-Instance"],
+    expose_headers=["X-CRT-Terminal-MT5", "X-CRT-Protocol", "X-CRT-Instance"],
 )
 
 
@@ -133,7 +133,7 @@ async def local_network_headers(request: Request, call_next):
     )
     if origin in ALLOWED_ORIGINS and private_network_preflight:
         response.headers["Access-Control-Allow-Private-Network"] = "true"
-    response.headers["X-SmartFlow-MT5"] = "demo-manual" if _execution_token else "read-only"
+    response.headers["X-CRT-Terminal-MT5"] = "demo-manual" if _execution_token else "read-only"
     response.headers["X-CRT-Protocol"] = str(PROTOCOL_VERSION)
     response.headers["X-CRT-Instance"] = _instance
     response.headers["Cache-Control"] = "no-store"
@@ -434,7 +434,8 @@ def runtime(request: Request):
 @app.post("/v1/shutdown")
 def shutdown(request: Request):
     _authorize_runtime(request)
-    if not secrets.compare_digest(request.headers.get("x-smartflow-shutdown", ""), _shutdown_token):
+    shutdown_token = request.headers.get("x-crt-terminal-shutdown", request.headers.get("x-smartflow-shutdown", ""))
+    if not secrets.compare_digest(shutdown_token, _shutdown_token):
         raise HTTPException(status_code=403, detail={"error": "SHUTDOWN_TOKEN_INVALID"})
     if _server is None:
         raise HTTPException(status_code=503, detail={"error": "SHUTDOWN_CONTROLLER_UNAVAILABLE"})
@@ -457,7 +458,7 @@ def health():
             "ok": True,
             "read_only": not bool(_execution_token),
             "execution_mode": "DEMO_ONLY" if _execution_token else "DISABLED",
-            "bridge": "SMARTFLOW_X_MT5",
+            "bridge": BRIDGE_ID,
             "protocol_version": PROTOCOL_VERSION,
             "instance": _instance,
             "owner": OWNER,
@@ -725,7 +726,7 @@ if __name__ == "__main__":
     listener.bind((HOST, PORT))
     listener.listen(128)
     actual_port = listener.getsockname()[1]
-    endpoint_file = os.getenv("SMARTFLOW_BRIDGE_ENDPOINT_FILE")
+    endpoint_file = os.getenv("CRT_TERMINAL_BRIDGE_ENDPOINT_FILE", os.getenv("SMARTFLOW_BRIDGE_ENDPOINT_FILE"))
     if endpoint_file:
         path = Path(endpoint_file)
         temporary = path.with_suffix(".tmp")
