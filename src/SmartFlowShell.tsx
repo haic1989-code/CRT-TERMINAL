@@ -700,7 +700,7 @@ export function SmartFlowShell() {
         <Metric label="DO ŚWIECY" value={candleTimer} />
         <Metric label="SERVER (UTC)" value={serverTime} />
       </div>
-      <div className="sf-top-right"><span className={`sf-live-dot ${feed.status}`} />{feed.status === 'live' ? 'MT5 · NA ŻYWO' : feed.status === 'error' ? 'MT5 · NIEDOSTĘPNY' : feed.status === 'connecting' ? 'MT5 · ŁĄCZENIE' : feed.status === 'history' ? 'MT5 · HISTORIA' : feed.status === 'closed' ? 'MT5 · ZAMKNIĘTY' : 'MT5 · NIEAKTUALNY'}<button className="sf-terminal-exit" aria-label="Zamknij terminal i most MT5" title="Zamknij terminal i most MT5" onClick={() => window.dispatchEvent(new Event('smartflow-x:shutdown'))}>⏻ WYJDŹ</button></div>
+      <div className="sf-top-right"><span className={`sf-live-dot ${feed.status === 'closed' ? 'live' : feed.status}`} />{feed.status === 'live' ? 'MT5 · NA ŻYWO' : feed.status === 'error' ? 'MT5 · NIEDOSTĘPNY' : feed.status === 'connecting' ? 'MT5 · ŁĄCZENIE' : feed.status === 'history' ? 'MT5 · HISTORIA' : feed.status === 'closed' ? 'MT5 · POŁĄCZONY' : 'MT5 · NIEAKTUALNY'}<button className="sf-terminal-exit" aria-label="Zamknij terminal i most MT5" title="Zamknij terminal i most MT5" onClick={() => window.dispatchEvent(new Event('smartflow-x:shutdown'))}>⏻ WYJDŹ</button></div>
     </header>
 
     <section className="sf-main-grid">
@@ -728,7 +728,7 @@ export function SmartFlowShell() {
           </div>}
 
           {dragon && <div className="dragon-clock">
-            <span className={`dragon-clock-live ${feed.status === 'live' ? 'is-live' : 'is-offline'}`} aria-label={feed.status === 'live' ? 'MT5 na żywo' : `MT5 ${feed.status === 'error' ? 'niedostępny' : feed.status === 'connecting' ? 'łączenie' : feed.status === 'stale' ? 'nieaktualny' : feed.status === 'closed' ? 'zamknięty' : 'historia'}`}><i aria-hidden="true">›</i> MT5 <b>{feed.status === 'live' ? 'NA ŻYWO' : feed.status === 'error' ? 'NIEDOSTĘPNY' : feed.status === 'connecting' ? 'ŁĄCZENIE' : feed.status === 'stale' ? 'NIEAKTUALNY' : feed.status === 'closed' ? 'ZAMKNIĘTY' : 'HISTORIA'}</b></span>
+            <span className={`dragon-clock-live ${feed.status === 'live' || feed.status === 'closed' ? 'is-live' : 'is-offline'}`} aria-label={feed.status === 'live' ? 'MT5 na żywo' : `MT5 ${feed.status === 'error' ? 'niedostępny' : feed.status === 'connecting' ? 'łączenie' : feed.status === 'stale' ? 'nieaktualny' : feed.status === 'closed' ? 'połączony; rynek zamknięty' : 'historia'}`}><i aria-hidden="true">›</i> MT5 <b>{feed.status === 'live' ? 'NA ŻYWO' : feed.status === 'error' ? 'NIEDOSTĘPNY' : feed.status === 'connecting' ? 'ŁĄCZENIE' : feed.status === 'stale' ? 'NIEAKTUALNY' : feed.status === 'closed' ? 'POŁĄCZONY' : 'HISTORIA'}</b></span>
             <span className="dragon-clock-candle"><i aria-hidden="true">◷</i> DO ŚWIECY <b>{candleTimer}</b></span>
             <span className="dragon-clock-server"><i>UTC</i> {serverTime}</span>
             <button type="button" className="dragon-motion-toggle" aria-label={ambientMotionPaused ? 'Wznów animacje interfejsu' : 'Zatrzymaj animacje interfejsu'} aria-pressed={!ambientMotionPaused} title={ambientMotionPaused ? 'Wznów efekty terminalu' : 'Zatrzymaj efekty terminalu'} onClick={() => setAmbientMotionPaused(value => !value)}>{ambientMotionPaused ? 'EFEKTY WYŁ.' : 'EFEKTY WŁ.'}</button>

@@ -473,6 +473,10 @@ def _market_session_payload(symbol: str, account: Any | None = None) -> dict[str
                 if name != symbol or session_kind != kind or day not in (weekday, previous_day):
                     continue
                 for start, end in windows:
+                    # MT5 reports a 24-hour session as 00:00–00:00 on
+                    # brokers that quote continuously (for example crypto).
+                    if start == 0 and end == 0 and day == weekday:
+                        return True
                     if start < end and day == weekday and start <= second_of_day < end:
                         return True
                     if start > end and ((day == weekday and second_of_day >= start) or (day == previous_day and second_of_day < end)):

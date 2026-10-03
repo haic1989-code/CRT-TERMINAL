@@ -1,10 +1,7 @@
-# CRT Terminal 0.1.22
+# CRT Terminal 0.1.23
 
-- Most MT5 otrzymuje spójną tożsamość `CRT_TERMINAL_MT5` i protokół v4 po stronie terminalu, aplikacji Tauri oraz bridge'a Python.
-- Nagłówki transportowe i wyłączania mostu używają prefiksu `X-CRT-Terminal-*`.
-- Zmienne środowiskowe mostu mają prefiks `CRT_TERMINAL_*`; starsze `SMARTFLOW_*` nadal działają jako aliasy zgodności.
-- Grafiki sesji symbolu pochodzą z natywnych godzin kwotowań/handlu MT5 przez dołączony, tylko odczytowy pomocnik MQL5. Bez kompletnego świeżego grafiku terminal nie zgaduje statusu zamknięcia.
-- Egzekucja DEMO ma jawne tryby Po rynku, Buy Limit i Sell Limit; most odrzuca niewłaściwą stronę lub cenę Limit i nie zamienia jej w Stop.
-- Protokół mostu zwiększono do v5 dla nowego odczytu sesji.
+- Godziny sesji `00:00–00:00` raportowane przez brokera są rozpoznawane jako sesja całodobowa, co poprawia weekendowy status krypto.
+- Zamknięta sesja symbolu nie oznacza już zamkniętego połączenia MT5. Terminal pokazuje osobno stan sesji i połączenia.
+- Poprawka nie wysyła zleceń. Zabezpieczenia egzekucji wyłącznie DEMO pozostają bez zmian.
 
-Aktualizacje nadal wymagają jawnego kliknięcia. Aplikacja zachowuje dotychczasowy identyfikator instalacji Windows, aby aktualizacja z poprzedniej wersji działała w tym samym miejscu. Pomocnik MQL5 wymaga jednorazowego skompilowania i uruchomienia na wykresie MT5. Nie wykonano żadnych operacji brokerskich ani zleceń DEMO.
+Aktualizacje nadal wymagają jawnego kliknięcia w terminalu. Pomocnik sesji MQL5 działa tylko do odczytu i musi być uruchomiony w MT5, aby dostarczać grafik brokera.
