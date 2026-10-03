@@ -147,7 +147,7 @@ class BridgeTests(unittest.TestCase):
     def test_requested_index_symbol_resolves_to_available_broker_alias(self):
         candidates = {
             "*DJ30*": [types.SimpleNamespace(name="DJ30.cash", currency_profit="USD")],
-            "*US30*": [types.SimpleNamespace(name="US30.pro", currency_profit="USD")],
+            "*US30*": [],
         }
         with patch.object(bridge, "_ensure_connected"), \
              patch.object(bridge.mt5, "symbol_info", return_value=None), \
@@ -191,7 +191,7 @@ class BridgeTests(unittest.TestCase):
         account = types.SimpleNamespace(
             login=1, server="Test", name="Trader", company="Broker", currency="USD", leverage=100,
             balance=1000, equity=1000, profit=0, margin=0, margin_free=1000, margin_level=None,
-            trade_allowed=True, trade_expert=True, margin_mode=0,
+            trade_allowed=True, trade_expert=True, margin_mode=0, trade_mode=0,
         )
         deals = [types.SimpleNamespace(position_id=11, entry=bridge.mt5.DEAL_ENTRY_OUT, profit=20, swap=0, commission=0)]
         with patch.object(bridge, "_ensure_connected"), \
@@ -205,6 +205,7 @@ class BridgeTests(unittest.TestCase):
         with patch.object(bridge, "_ensure_connected"), \
              patch.object(bridge, "_resolve_requested_symbol", return_value="XAUUSD.a"), \
              patch.object(bridge.mt5, "order_calc_margin", return_value=420.5) as calc, \
+             patch.object(bridge.mt5, "account_info", return_value=types.SimpleNamespace(currency="USD")), \
              patch.object(bridge, "_account_payload", return_value={"currency": "USD"}):
             result = bridge.calculate("margin", "XAUUSD", "buy", 0.2, 2300)
         calc.assert_called_once_with(bridge.mt5.ORDER_TYPE_BUY, "XAUUSD.a", 0.2, 2300)
