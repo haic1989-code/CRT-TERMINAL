@@ -75,6 +75,9 @@ bridge = importlib.import_module("bridge")
 class BridgeTests(unittest.TestCase):
     def setUp(self):
         bridge._resolved_symbol = None
+        bridge._identity = None
+        bridge._next_initialize = 0.0
+        bridge._daily_cache = None
         bridge._closing.clear()
 
     def test_native_weekly_bars_are_available_for_reference_levels(self):
@@ -143,8 +146,8 @@ class BridgeTests(unittest.TestCase):
 
     def test_requested_index_symbol_resolves_to_available_broker_alias(self):
         candidates = {
-            "*DJ30*": [types.SimpleNamespace(name="DJ30.cash")],
-            "*US30*": [types.SimpleNamespace(name="US30.pro")],
+            "*DJ30*": [types.SimpleNamespace(name="DJ30.cash", currency_profit="USD")],
+            "*US30*": [types.SimpleNamespace(name="US30.pro", currency_profit="USD")],
         }
         with patch.object(bridge, "_ensure_connected"), \
              patch.object(bridge.mt5, "symbol_info", return_value=None), \
@@ -156,7 +159,7 @@ class BridgeTests(unittest.TestCase):
         with patch.object(bridge, "PREFERRED_SYMBOL", "BTCUSD"), \
              patch.object(bridge, "_ensure_connected"), \
              patch.object(bridge.mt5, "symbol_info", return_value=None), \
-             patch.object(bridge.mt5, "symbols_get", side_effect=lambda pattern: [types.SimpleNamespace(name="BTCUSD.pro")] if pattern == "*BTC*" else []), \
+             patch.object(bridge.mt5, "symbols_get", side_effect=lambda pattern: [types.SimpleNamespace(name="BTCUSD.pro", currency_profit="USD")] if pattern == "*BTC*" else []), \
              patch.object(bridge.mt5, "symbol_select", return_value=True):
             self.assertEqual(bridge._resolve_requested_symbol("BTCUSD"), "BTCUSD.pro")
 
@@ -191,14 +194,16 @@ class BridgeTests(unittest.TestCase):
             trade_allowed=True, trade_expert=True, margin_mode=0,
         )
         deals = [types.SimpleNamespace(position_id=11, entry=bridge.mt5.DEAL_ENTRY_OUT, profit=20, swap=0, commission=0)]
-        with patch.object(bridge.mt5, "account_info", return_value=account), \
+        with patch.object(bridge, "_ensure_connected"), \
+             patch.object(bridge.mt5, "account_info", return_value=account), \
              patch.object(bridge.mt5, "history_deals_get", return_value=deals), \
              patch.object(bridge.mt5, "positions_get", return_value=[]):
             payload = bridge._account_payload()
         self.assertEqual(payload["daily_win_rate"], 100.0)
 
     def test_margin_helper_uses_mt5_calculation_and_currency(self):
-        with patch.object(bridge, "_resolve_requested_symbol", return_value="XAUUSD.a"), \
+        with patch.object(bridge, "_ensure_connected"), \
+             patch.object(bridge, "_resolve_requested_symbol", return_value="XAUUSD.a"), \
              patch.object(bridge.mt5, "order_calc_margin", return_value=420.5) as calc, \
              patch.object(bridge, "_account_payload", return_value={"currency": "USD"}):
             result = bridge.calculate("margin", "XAUUSD", "buy", 0.2, 2300)
