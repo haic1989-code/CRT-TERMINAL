@@ -3,6 +3,7 @@ import { check, type Update } from '@tauri-apps/plugin-updater'
 import { stopMt5Bridge } from './bridgeShutdown'
 
 export type UpdateCheck = { update: Update | null; message: string; warning: boolean }
+const waitForPaint = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 export async function checkTerminalUpdate(): Promise<UpdateCheck> {
   if (!isTauri()) return { update: null, message: 'To podgląd przeglądarkowy. Aktualizacje instaluję tylko w aplikacji Windows.', warning: false }
   try {
@@ -24,9 +25,13 @@ export async function installTerminalUpdate(update: Update, progress: (text: str
     }
   }, { timeout: 120000 })
   // Download validates the signature before stopping any working local service.
-  progress('Podpis jest poprawny. Zamykam własny most MT5 przed instalacją…')
+  progress('Pobieranie zakończone. Sprawdzam podpis pakietu…')
+  await waitForPaint()
+  progress('Podpis pakietu jest poprawny. Zamykam własny most MT5…')
+  await waitForPaint()
   await stopMt5Bridge({ allowUnavailable: true })
-  progress('Instaluję aktualizację. Terminal zostanie ponownie uruchomiony.')
+  progress('Zapisuję aktualizację. Terminal zamknie się na chwilę i uruchomi ponownie…')
+  await waitForPaint()
   await update.install()
   // On Windows, the updater starts NSIS and restarts the application itself.
 }
