@@ -1,12 +1,12 @@
 {
   "name": "crt-terminal",
   "private": true,
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:app": "vite --host 127.0.0.1 --port 5174 --strictPort",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/check-powershell-encoding.mjs && tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -9,12 +9,26 @@ struct BridgeBootstrap {
     child: Mutex<Option<Child>>,
     status_path: std::path::PathBuf,
     endpoint_path: std::path::PathBuf,
+    bootstrap_log_path: std::path::PathBuf,
     owner: String,
 }
 
 #[tauri::command]
 fn read_bridge_startup_status(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let bootstrap = app.state::<BridgeBootstrap>();
+    let exit = bootstrap.child.lock()
+        .map_err(|_| "Nie mogę odczytać procesu mostu.".to_string())?
+        .as_mut().map(|child| child.try_wait()).transpose()
+        .map_err(|error| format!("Nie mogę odczytać stanu mostu: {error}"))?
+        .flatten();
+    if let Some(code) = exit {
+        let log = std::fs::read_to_string(&bootstrap.bootstrap_log_path).unwrap_or_default();
+        let tail: String = log.chars().rev().take(1800).collect::<String>().chars().rev().collect();
+        return Ok(Some(serde_json::json!({
+            "state": "error",
+            "message": format!("Proces uruchamiania mostu zakończył się ({code}). Nie mam aktywnego połączenia. Szczegóły: {tail}"),
+        }).to_string()));
+    }
     match std::fs::read_to_string(&bootstrap.status_path) {
         Ok(status) => Ok(Some(status)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -67,6 +81,11 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<BridgeBootstrap, String> {
     let owner = format!("{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos());
     let status_path = app_data_dir.join(format!("bridge-startup-{owner}.json"));
     let endpoint_path = app_data_dir.join(format!("bridge-endpoint-{owner}.json"));
+    let bootstrap_log_path = app_data_dir.join(format!("bridge-bootstrap-{owner}.log"));
+    let bootstrap_log = std::fs::File::create(&bootstrap_log_path)
+        .map_err(|error| format!("Nie mogę przygotować logu startu mostu: {error}"))?;
+    let bootstrap_stderr = bootstrap_log.try_clone()
+        .map_err(|error| format!("Nie mogę przygotować diagnostyki mostu: {error}"))?;
     let runtime_root = app_data_dir.join("mt5-bridge-runtime-v2");
 
     let mut command = Command::new("powershell.exe");
@@ -96,8 +115,8 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<BridgeBootstrap, String> {
                 .ok_or("Nieprawidłowa ścieżka skryptu mostu")?,
         )
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(bootstrap_log))
+        .stderr(Stdio::from(bootstrap_stderr));
 
     #[cfg(windows)]
     {
@@ -106,7 +125,7 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<BridgeBootstrap, String> {
     }
 
     let child = command.spawn().map_err(|error| format!("Nie udało się uruchomić mostu MT5: {error}"))?;
-    Ok(BridgeBootstrap { child: Mutex::new(Some(child)), status_path, endpoint_path, owner })
+    Ok(BridgeBootstrap { child: Mutex::new(Some(child)), status_path, endpoint_path, bootstrap_log_path, owner })
 }
 
 pub fn run() {
