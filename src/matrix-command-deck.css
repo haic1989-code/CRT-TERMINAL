@@ -197,6 +197,7 @@
 .sf-matrix .matrix-command-deck .context-item{grid-template-columns:3ch 62px minmax(0,1fr);gap:6px;}
 .sf-matrix .matrix-command-deck .direction-bar{width:62px;min-width:62px;height:10px;gap:3px;}
 .sf-matrix .matrix-command-deck .direction-beam{width:28px;opacity:.95;background:linear-gradient(90deg,transparent,#f2fffb,currentColor,transparent);mask-image:none;mix-blend-mode:screen;}
+.sf-matrix .matrix-command-deck .direction-bar[data-motion="off"] .direction-beam{display:none;}
 .sf-matrix .matrix-command-deck .direction-bar i{height:100%;box-shadow:0 0 6px currentColor;}
 .sf-matrix .matrix-command-deck .deck-quote-pulse{display:block;padding:7px 5px;margin:0 0 14px;font-size:10px;color:var(--green);border-left:2px solid var(--green);}
 .sf-matrix .matrix-command-deck .lot-slider{height:12px;box-shadow:0 0 12px #e4c58b33;transition:box-shadow .25s;}

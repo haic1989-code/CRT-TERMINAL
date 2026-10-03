@@ -7,13 +7,16 @@ Statusy: POMYSŁ / ZAAKCEPTOWANE / W REALIZACJI / WDROŻONE / ODRZUCONE.
 ======================================================================
 001. DYNAMIKA PRAWEGO PANELU
 Data dodania: 2026-10-03
-Status: WDROŻONE (kod wersji 0.1.14; odbiór wizualny użytkownika pozostaje do wykonania)
+Status: WDROŻONE (kod wersji 0.1.16; odbiór wizualny użytkownika pozostaje do wykonania)
 
 Realizacja: GSAP steruje światłem pasków i impulsami zmian danych.
 Dodano płynne przejścia kolorów, kontrolkę live i animację wypełnienia lota.
 W 0.1.14 wzmocniono falę światła i jasność segmentów, dodano impuls Bid/Ask
 oraz 8-sekundowy podgląd dynamiki także przy zamkniętym rynku.
-Szczegóły i ograniczenia: docs/releases/0.1.14-demo-execution-luna.md.
+W 0.1.16 ruch dekoracyjny działa stale, również bez nowych ticków.
+Impulsy danych wymagają rzeczywistej aktualizacji. Ustawienia zawierają
+trwały przełącznik Dynamika pasków, domyślnie włączony.
+Szczegóły: docs/releases/0.1.16-ambient-panel-motion.md.
 
 Cel: ożywić panel w stylu Matrix CRT, zachowując czytelność i zgodność
 wyświetlanych informacji z rzeczywistymi danymi MT5.

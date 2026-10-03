@@ -44,7 +44,7 @@ export function TerminalStatus(p: Props) {
         <span className="dragon-account-equity" key={'eq' + amount(p.account.equity)}>KAPITAŁ <b>{amount(p.account.equity)}</b></span>
         <span className="dragon-account-free" key={'free' + amount(p.account.margin_free)}>WOLNE <b>{amount(p.account.margin_free)}</b></span>
         <span className={(p.account.day_pnl ?? 0) >= 0 ? 'positive' : 'negative'} key={'day' + amount(p.account.day_pnl)}>DZISIAJ <b>{amount(p.account.day_pnl)}</b></span>
-        {p.feed.status !== 'live' && <span className="negative">NIEAKTUALNE</span>}
+        {(!p.account.observed_at || p.clockNow - p.account.observed_at > 15000 || p.account.observed_at > p.clockNow + 1000) && <span className="negative">DANE KONTA NIEAKTUALNE</span>}
         <span className="dragon-terminal-cursor" aria-hidden="true">▌</span>
       </p> : <p className="dragon-account-status">Luna › Czekam na dane konta. <span className="dragon-terminal-cursor" aria-hidden="true">▌</span></p>}
     </div>
