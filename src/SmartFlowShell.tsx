@@ -15,7 +15,7 @@ import { TerminalStatus, type TerminalFocus } from './TerminalStatus'
 import { INDICATOR_CATALOG } from './indicators/catalog'
 import type { IndicatorId, IndicatorPreferences, IndicatorSettings } from './indicators/catalog'
 import { readIndicatorPreferences, writeIndicatorPreferences } from './indicators/preferences'
-import { fetchMt5Bars, fetchMt5Calculation, fetchMt5ContextBars, fetchMt5FxBars, fetchMt5Orders, fetchMt5Positions, fetchMt5SymbolInfo, fetchMt5Symbols, type Mt5Order, type Mt5Position } from './mt5Client'
+import { fetchMt5Bars, fetchMt5Calculation, fetchMt5ContextBars, fetchMt5FxBars, fetchMt5Orders, fetchMt5Positions, fetchMt5SymbolInfo, fetchMt5Symbols, type Mt5Order, type Mt5Position, type Mt5SymbolInfo } from './mt5Client'
 import type { AlertRule, BreakEvenMode, MarketBar, MarketContextSnapshot, SymbolSpec, TradePlan } from './domain/contracts'
 import { mt5AccountToDomain, mt5OrderToDomain, mt5PositionToDomain, mt5SymbolToDomain } from './adapters/mt5DomainAdapter'
 import { AlertEngine, BreakevenEngine, ContextSummaryEngine, CurrencyStrengthEngine, KeyLevelsEngine, MarketProfileEngine, MTFContextEngine, PlannerBreakEvenEngine, PortfolioRiskEngine, PositionSizingEngine, RiskGuardEngine, SessionEngine, planRisk as calculatePlanRisk } from './engines'
@@ -104,6 +104,26 @@ function titleForDrawer(id: DrawerId) {
   return ({ planner: 'PLANER TRANSAKCJI PRO', risk: 'OCHRONA RYZYKA', fx: 'KONTEKST WALUTOWY', profile: 'PROFIL RYNKU', drawing: 'NARZĘDZIA RYSUNKOWE', indicators: 'PRZEGLĄD WSKAŹNIKÓW', alerts: 'SILNIK ALERTÓW', instruments: 'WYBÓR INSTRUMENTU', context: 'PANEL KONTEKSTU' } as Record<string, string>)[id || ''] || ''
 }
 
+function snapPlannerLot(value: number, info?: Mt5SymbolInfo) {
+  const min = Math.max(0.01, info?.volume_min ?? 0.01)
+  const max = Math.min(1, info?.volume_max ?? 1)
+  const step = info?.volume_step ?? 0.01
+  if (min > max || step <= 0) return 0
+  const bounded = Math.max(min, Math.min(max, value))
+  const snapped = min + Math.round((bounded - min) / step) * step
+  return Number(Math.min(max, snapped).toFixed(8))
+}
+
+function brokerLotDescription(info: Mt5SymbolInfo | undefined, lots: number) {
+  if (!info || !Number.isFinite(info.trade_contract_size) || info.trade_contract_size <= 0 || !info.currency_base) return 'Luna › Czekam na specyfikację wolumenu symbolu z MT5.'
+  const unit = info.currency_base.toUpperCase()
+  const amount = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 8 }).format(info.trade_contract_size * lots)
+  const contract = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 8 }).format(info.trade_contract_size)
+  const minimum = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 8 }).format(info.volume_min)
+  const step = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 8 }).format(info.volume_step)
+  return `${lots.toLocaleString('pl-PL', { maximumFractionDigits: 8 })} lota ≈ ${amount} ${unit} · 1 lot = ${contract} ${unit} · min ${minimum} · krok ${step}`
+}
+
 export function SmartFlowShell() {
   const dragon = new URLSearchParams(window.location.search).get("ui") !== "legacy"
   const [agentAssetMissing, setAgentAssetMissing] = useState(false)
@@ -152,6 +172,7 @@ export function SmartFlowShell() {
   const [contextBars, setContextBars] = useState<Record<string, MarketBar[]>>({})
   const [contextObservedAt, setContextObservedAt] = useState(0)
   const [drawer, setDrawer] = useState<DrawerId>(null)
+  const [instrumentPromptOpen, setInstrumentPromptOpen] = useState(false)
   const [initialBottomPanel] = useState(() => readBottomPanelState(bottomStorageKey, dragon ? 0.38 : 0.65))
   const [bottomTab, setBottomTab] = useState<BottomTab>(initialBottomPanel.tab)
   const [bottomExpanded, setBottomExpanded] = useState(initialBottomPanel.expanded)
@@ -171,6 +192,7 @@ export function SmartFlowShell() {
   const [breakEvenMode, setBreakEvenMode] = useState<BreakEvenMode>(dragon ? 'off' : 'manual')
   const [symbolQuery, setSymbolQuery] = useState('')
   const [symbolResults, setSymbolResults] = useState<any[]>([])
+  const [symbolSearchLoading, setSymbolSearchLoading] = useState(false)
   const [instrumentPinned, setInstrumentPinned] = useState(false)
   const [activeAlerts, setActiveAlerts] = useState<AlertRule[]>(() => readStoredAlerts())
   const activeAlertsRef = useRef<AlertRule[]>(activeAlerts)
@@ -209,6 +231,11 @@ export function SmartFlowShell() {
 
   const symbolInfo = feed.symbolInfo
   const spec: SymbolSpec | null = symbolInfo ? mt5SymbolToDomain(symbolInfo) : null
+
+  useEffect(() => {
+    if (!symbolInfo) return
+    setPlannerLot(current => snapPlannerLot(current, symbolInfo))
+  }, [symbolInfo?.symbol, symbolInfo?.volume_min, symbolInfo?.volume_max, symbolInfo?.volume_step])
 
   useEffect(() => { setAccount(feed.account ?? null) }, [feed.account])
   useEffect(() => { writeIndicatorPreferences(indicatorPreferences) }, [indicatorPreferences])
@@ -330,11 +357,12 @@ export function SmartFlowShell() {
     return () => { dead = true; window.clearInterval(timer) }
   }, [])
   useEffect(() => {
-    if (drawer !== 'instruments' || !symbolQuery.trim()) { setSymbolResults([]); return }
+    if (!instrumentPromptOpen && drawer !== 'instruments') { setSymbolResults([]); setSymbolSearchLoading(false); return }
     let dead = false
-    const timer = window.setTimeout(() => fetchMt5Symbols(symbolQuery).then((r) => { if (!dead) setSymbolResults(r.values) }).catch(() => { if (!dead) setSymbolResults([]) }), 180)
+    setSymbolSearchLoading(true)
+    const timer = window.setTimeout(() => fetchMt5Symbols(symbolQuery).then((r) => { if (!dead) setSymbolResults(r.values) }).catch(() => { if (!dead) setSymbolResults([]) }).finally(() => { if (!dead) setSymbolSearchLoading(false) }), 180)
     return () => { dead = true; window.clearTimeout(timer) }
-  }, [drawer, symbolQuery])
+  }, [drawer, instrumentPromptOpen, symbolQuery])
   useEffect(() => {
     if (!feed.lastPrice || !activeAlertsRef.current.length) return
     const events: { ruleId: string; symbol: string; price: number; firedAt: number }[] = []
@@ -500,11 +528,22 @@ export function SmartFlowShell() {
     if (id === 'alerts') setFocusedAlertId(null)
     setDrawer((current) => current === id ? null : id)
   }
+  const openInstrumentPrompt = () => {
+    if (!dragon) { openDrawer('instruments'); return }
+    setDrawer(null)
+    setPeriodPrompt(null)
+    setSymbolQuery('')
+    setInstrumentPromptOpen(true)
+  }
   const openContextTimeframe = (tf: ContextTimeframe) => { setContextTimeframe(tf); setDrawer('context') }
   const selectInstrument = (nextSymbol: string) => {
+    setPlannerCancelRequest({ nonce: Date.now() })
+    setPlannerLevelRequest(null)
+    setFeed(current => ({ ...current, status: 'connecting', symbol: nextSymbol, symbolInfo: undefined, lastPrice: undefined, bid: undefined, ask: undefined, lastTickAt: null, marketSession: undefined }))
     setSymbol(nextSymbol)
     setSymbolQuery('')
-    if (!instrumentPinned) setDrawer(null)
+    setInstrumentPromptOpen(false)
+    notifyConsole(`OTWIERAM ${nextSymbol}`)
   }
   const setPlannerTargetEnabled = (target: 'tp1' | 'tp2' | 'tp3', enabled: boolean) => {
     const next = { ...plannerTargets, [target]: enabled }
@@ -720,7 +759,7 @@ export function SmartFlowShell() {
 
       <section className="sf-center-column">
         <div className="sf-chart-toolbar">
-          <button className="sf-symbol-trigger" onClick={() => openDrawer('instruments')}><span className="sf-asset-icon">{symbol === 'XAUUSD' ? 'Au' : symbol === 'BTCUSD' ? '₿' : '30'}</span>{symbol}<b>⌄</b></button>
+          <button className="sf-symbol-trigger" onClick={openInstrumentPrompt} aria-haspopup="dialog" aria-expanded={instrumentPromptOpen}><span className="sf-asset-icon">{symbol === 'XAUUSD' ? 'Au' : symbol === 'BTCUSD' || symbol.toUpperCase().includes('BTC') ? '₿' : '30'}</span>{symbol}<b>⌄</b></button>
           <div className="sf-timeframes">{TIMEFRAMES.map((tf) => <button key={tf} className={timeframe === tf ? 'active' : ''} onClick={() => setTimeframe(tf)}>{tf}</button>)}</div>
           {dragon && <div className="dragon-chart-navigation" aria-label="Sterowanie wykresem">
             <button type="button" className={autoScrollEnabled ? 'is-active' : ''} aria-label="Automatyczne przewijanie" aria-pressed={autoScrollEnabled} onClick={() => setAutoScrollEnabled(value => !value)} title="Śledź najnowszą cenę">↧ <span>AUTO</span></button>
@@ -741,7 +780,7 @@ export function SmartFlowShell() {
         {dragon && <aside className="dragon-art matrix-agent-art" aria-label="Statyczne tło wykresu z agentką AI"><img src={`${import.meta.env.BASE_URL}assets/chart-agent-background-v3.png`} alt="Statyczne, ilustracyjne tło wykresu z agentką AI po lewej stronie" hidden={agentAssetMissing} onError={() => setAgentAssetMissing(true)} />{agentAssetMissing && <p className="matrix-asset-status" role="status">Luna › Nie mogę wczytać tła wykresu.</p>}</aside>}
           <div className="sf-chart-heading"><div><strong>{symbol}</strong><span> · {timeframe} · {symbolInfo?.description || 'MT5'}</span></div><span className={`sf-chart-status ${feed.status}`}><i />{feed.status === 'live' ? 'LIVE' : feed.status.toUpperCase()}</span></div>
           <div className="sf-chart-canvas" data-target-profit-full={plannerFullTpProfitLabel ?? ''} data-target-loss-full={plannerFullSlLossLabel ?? ''} data-target-profit-tp1={plannerTargetProfitLabels[0] ?? ''} data-target-profit-tp2={plannerTargetProfitLabels[1] ?? ''} data-target-profit-tp3={plannerTargetProfitLabels[2] ?? ''}><MarketChart volumeVisible={volumeVisible} compactFeedStatus={dragon} navigationControlsExternal={dragon} autoScrollEnabled={autoScrollEnabled} onAutoScrollChange={setAutoScrollEnabled} chartShiftEnabled={chartShiftEnabled} onChartShiftChange={setChartShiftEnabled} timeframe={timeframe} symbol={symbol} plannerTargets={plannerTargets} plannerTargetProfitLabels={plannerTargetProfitLabels} plannerFullTpProfitLabel={plannerFullTpProfitLabel} plannerFullSlLossLabel={plannerFullSlLossLabel} plannerLevelRequest={plannerLevelRequest} onPlannerLevelPlacementComplete={(nonce) => setPlannerLevelRequest(current => current?.nonce === nonce ? null : current)} breakEvenMode={breakEvenMode} managedPosition={managedPosition} managedOrder={managedOrder} cancelRequest={plannerCancelRequest} onFeedStateChange={setFeed} onPlannerChange={setPlanner} onBarsChange={setBars} plannerRequest={plannerRequest} drawingRequest={drawingRequest} onDrawingComplete={result => { if (result === 'saved') notifyConsole(`${DRAWING_TOOLS.find(t => t.id === drawTool)?.label.toUpperCase() || 'RYSUNEK'} ZAPISANE`); setDrawingRequest(null); setDrawTool('') }} indicators={selectedIndicator} indicatorSettings={indicatorSettings} marketProfile={profileEnabled ? profile : null} marketProfileView={profileView} referenceLevels={referenceLevels} alerts={activeAlerts} onAlertSelect={focusAlert} simulationTickId={simulationTickId} rangeScanId={rangeScan?.id ?? 0} rangeScanDetected={rangeScan?.detected ?? false} /></div>
-          {dragon && <CrtChartConsole notice={consoleNotice} motionPaused={ambientMotionPaused} periodPrompt={periodPrompt} onPeriodCancel={() => setPeriodPrompt(null)} onPeriodSubmit={(id, period) => { setIndicatorSettings(current => ({...current,[id]:{...current[id],visible:true,period}})); setSelectedIndicator(current => current.includes(id) ? current : [...current,id]); setPeriodPrompt(null); notifyConsole(`${id.split(' ')[0]} ${period} WŁĄCZONO`) }} />}
+          {dragon && <CrtChartConsole notice={consoleNotice} motionPaused={ambientMotionPaused} periodPrompt={periodPrompt} onPeriodCancel={() => setPeriodPrompt(null)} onPeriodSubmit={(id, period) => { setIndicatorSettings(current => ({...current,[id]:{...current[id],visible:true,period}})); setSelectedIndicator(current => current.includes(id) ? current : [...current,id]); setPeriodPrompt(null); notifyConsole(`${id.split(' ')[0]} ${period} WŁĄCZONO`) }} instrumentPrompt={instrumentPromptOpen} instrumentSymbol={symbol} symbolQuery={symbolQuery} symbolOptions={symbolResults} symbolSearchLoading={symbolSearchLoading} onSymbolQuery={setSymbolQuery} onInstrumentSelect={selectInstrument} onInstrumentCancel={() => setInstrumentPromptOpen(false)} />}
           {dragon && <TerminalStatus feed={feed} account={account} positions={positions} orders={orders} positionsObservedAt={positionsObservedAt} ordersObservedAt={ordersObservedAt} clockNow={clockNow} focus={terminalFocus} onFocus={setTerminalFocus} symbol={symbol} alertEvents={alertEvents} />}
           {drawer && <div className={`sf-large-drawer sf-drawer-${drawer}`} role="dialog" aria-label={titleForDrawer(drawer)}>
             <div className="sf-drawer-head"><span><small>&gt; MODUŁ / TERMINAL LOKALNY</small><strong>{titleForDrawer(drawer)}</strong></span><button className="sf-close" onClick={() => setDrawer(null)} aria-label="Zamknij">×</button></div>
@@ -768,7 +807,7 @@ export function SmartFlowShell() {
           onPeriod={(id, period) => setIndicatorSettings(current => ({...current,[id]:{...current[id],visible:current[id]?.visible !== false,period}}))}
           profile={profileEnabled} onProfile={() => {notifyConsole(`PROFIL RYNKU ${profileEnabled ? 'WYŁĄCZONO' : 'WŁĄCZONO'}`); setProfileEnabled(v => !v)}}
           volume={volumeVisible} onVolume={() => {notifyConsole(`WOLUMEN TICKOWY ${volumeVisible ? 'WYŁĄCZONO' : 'WŁĄCZONO'}`); setVolumeVisible(v => !v)}} drawing={drawTool} onDrawing={activateDrawingTool}
-          planner={planner} lot={plannerLot} appliedLot={metrics?.volume ?? null} onLot={setPlannerLot} targets={plannerTargets} targetLots={plannerTargetLots}
+          planner={planner} lot={plannerLot} appliedLot={metrics?.volume ?? null} onLot={(value) => setPlannerLot(snapPlannerLot(value, symbolInfo))} lotMin={Math.max(0.01, symbolInfo?.volume_min ?? 0.01)} lotMax={Math.min(1, symbolInfo?.volume_max ?? 1)} lotStep={symbolInfo?.volume_step ?? 0.01} lotContractLabel={brokerLotDescription(symbolInfo, plannerLot)} targets={plannerTargets} targetLots={plannerTargetLots}
           allocations={takeProfitAllocations} volumeStep={symbolInfo?.volume_step || .01} placing={plannerLevelRequest?.target ?? null} onTarget={selectPlannerTarget}
           onDisableTarget={disablePlannerTarget} onAllocation={updateTargetAllocation} onPlan={requestPlan} onCancel={cancelPlan} paused={ambientMotionPaused}
         /> : <>

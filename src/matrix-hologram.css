@@ -10,6 +10,28 @@
   text-shadow:0 0 8px #6bffb26b; overflow-wrap:anywhere;
 }
 .sf-matrix .crt-console-line > span:last-child { text-align:right; }
+.sf-matrix .crt-chart-console:has(.crt-instrument-prompt) {
+  left:14px; right:auto; top:12px; width:min(420px,calc(100% - 82px));
+  text-align:left; pointer-events:auto;
+}
+.sf-matrix .crt-instrument-prompt {
+  padding:9px 11px 8px; border-left:2px solid #69f4bc;
+  background:linear-gradient(90deg,#03130ff2,#041b18e8 82%,#061521d9);
+  box-shadow:0 4px 20px #0008,0 0 14px #56f5bd16;
+  color:#c4ffe8; text-shadow:0 0 8px #5affc444; text-align:left;
+}
+.sf-matrix .crt-instrument-message {margin:0 0 8px;color:#b8ffdf;font-weight:700;}
+.sf-matrix .crt-instrument-search {display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:9px;margin-bottom:7px;color:#65cfa6;font-size:9px;letter-spacing:.1em;}
+.sf-matrix .crt-instrument-search input {min-width:0;height:27px;padding:4px 6px;border:0;border-bottom:1px solid #3a9472;background:#03100f;color:#d1ffeb;font:10px Consolas,monospace;outline:none;}
+.sf-matrix .crt-instrument-search input:focus {border-bottom-color:#a1ffdc;box-shadow:0 2px 8px #71ffc544;}
+.sf-matrix .crt-instrument-quick {display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px;}
+.sf-matrix .crt-instrument-quick button,.sf-matrix .crt-instrument-results button,.sf-matrix .crt-instrument-cancel {min-height:24px;padding:4px 7px;border:1px solid #286c58;background:#071b18;color:#9effcf;font:9px Consolas,monospace;cursor:pointer;}
+.sf-matrix .crt-instrument-quick button[aria-pressed=true],.sf-matrix .crt-instrument-results button.active {border-color:#64efb5;color:#d7ffed;background:#12362d;}
+.sf-matrix .crt-instrument-results {display:grid;gap:3px;max-height:154px;overflow:auto;}
+.sf-matrix .crt-instrument-results button {display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:left;}
+.sf-matrix .crt-instrument-results button span,.sf-matrix .crt-instrument-hint {overflow:hidden;color:#77b99a;font-size:8px;text-overflow:ellipsis;white-space:nowrap;}
+.sf-matrix .crt-instrument-results button b {flex:0 0 auto;color:#d4ffea;}
+.sf-matrix .crt-instrument-cancel {display:block;min-height:20px;margin:7px 0 0 auto;padding:2px 5px;border-color:transparent;background:transparent;color:#79ac98;}
 .crt-console-readable {position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap;}
 .crt-console-cursor {font-style:normal; animation:crt-cursor 1s steps(1) infinite; color:#d5ffe8;}
 .sf-matrix .crt-level-list {
@@ -40,6 +62,7 @@
 @media(prefers-reduced-motion:reduce) {.crt-console-cursor {animation:none!important;}}
 @media(max-width:700px) {
   .sf-matrix .crt-chart-console {right:52px; top:10px; width:min(320px,calc(100% - 64px)); font-size:10px;}
+  .sf-matrix .crt-chart-console:has(.crt-instrument-prompt) {left:8px;right:auto;top:8px;width:min(360px,calc(100% - 64px));}
 }
 
 /* No pointer parallax: chart, artwork and command panel remain stationary. */

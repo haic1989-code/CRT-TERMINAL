@@ -29,10 +29,18 @@ type Props = {
   periodPrompt?: {indicator:'SMA 20'|'EMA 50'; token:number} | null
   onPeriodSubmit?: (indicator:'SMA 20'|'EMA 50', period:number) => void
   onPeriodCancel?: () => void
+  instrumentPrompt?: boolean
+  instrumentSymbol?: string
+  symbolQuery?: string
+  symbolOptions?: Array<{symbol:string;description:string;visible:boolean}>
+  symbolSearchLoading?: boolean
+  onSymbolQuery?: (query:string) => void
+  onInstrumentSelect?: (symbol:string) => void
+  onInstrumentCancel?: () => void
 }
 
-/** Chart feedback only; selectable levels live in the text Command Deck. */
-export function CrtChartConsole({notice, motionPaused, periodPrompt = null, onPeriodSubmit, onPeriodCancel}:Props) {
+/** CRT chart messages and short symbol/indicator prompts. */
+export function CrtChartConsole({notice, motionPaused, periodPrompt = null, onPeriodSubmit, onPeriodCancel, instrumentPrompt = false, instrumentSymbol = '', symbolQuery = '', symbolOptions = [], symbolSearchLoading = false, onSymbolQuery, onInstrumentSelect, onInstrumentCancel}:Props) {
   const [question,setQuestion] = useState('')
   const [value,setValue] = useState('')
   const [error,setError] = useState('')
@@ -64,7 +72,19 @@ export function CrtChartConsole({notice, motionPaused, periodPrompt = null, onPe
     onPeriodSubmit(periodPrompt.indicator,period)
   }
   return <aside className="crt-chart-console" aria-label="Konsola wykresu CRT">
-    {notice && <div role="status" aria-live="polite" aria-atomic="true"><TypedLine text={notice.text} sequence={notice.id} paused={motionPaused} /></div>}
+    {notice && !instrumentPrompt && <div role="status" aria-live="polite" aria-atomic="true"><TypedLine text={notice.text} sequence={notice.id} paused={motionPaused} /></div>}
+    {instrumentPrompt && <section className="crt-instrument-prompt" role="dialog" aria-label="Wybór symbolu">
+      <p className="crt-instrument-message">Luna › Jaki instrument mam wyświetlić?</p>
+      <label className="crt-instrument-search"><span>SYMBOL BROKERA</span><input autoFocus type="search" value={symbolQuery} placeholder="Szukaj, np. BTCUSD…" onChange={event=>onSymbolQuery?.(event.target.value)} /></label>
+      <div className="crt-instrument-quick" aria-label="Szybki wybór instrumentu">{['XAUUSD','BTCUSD','DJ30'].map(item=><button type="button" key={item} aria-pressed={instrumentSymbol===item} onClick={()=>onInstrumentSelect?.(item)}>{item}</button>)}</div>
+      <div className="crt-instrument-results" aria-label="Symbole dostępne u brokera">
+        {symbolSearchLoading && <small className="crt-instrument-hint">Luna › Pobieram listę symboli z MT5…</small>}
+        {!symbolSearchLoading && symbolOptions.slice(0,8).map(item=><button type="button" key={item.symbol} className={instrumentSymbol===item.symbol?'active':''} onClick={()=>onInstrumentSelect?.(item.symbol)}><b>{item.symbol}</b><span>{item.description || (item.visible?'WIDOCZNY':'DOSTĘPNY')}</span></button>)}
+        {!symbolSearchLoading && symbolQuery.trim() && symbolOptions.length===0 && <small className="crt-instrument-hint">Luna › Nie znalazłam takiego symbolu u brokera.</small>}
+        {!symbolSearchLoading && !symbolQuery.trim() && symbolOptions.length===0 && <small className="crt-instrument-hint">Luna › Wybierz szybki symbol albo wpisz nazwę brokera.</small>}
+      </div>
+      <button type="button" className="crt-instrument-cancel" onClick={onInstrumentCancel}>ANULUJ</button>
+    </section>}
     {periodPrompt && <div className="crt-agent-period" role="status" aria-live="polite">
       <p className="crt-agent-question"><span className="crt-console-readable">{promptText}</span><span aria-hidden="true">{question}<i className="crt-console-cursor">▌</i></span></p>
       {question === promptText && <form className="crt-agent-period-form" onSubmit={submit}>
