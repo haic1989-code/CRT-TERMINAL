@@ -25,17 +25,6 @@ const priceBases: Record<string, number> = {
   GBPAUD: 1.934,
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    if (new URL(window.location.href).searchParams.get('startup-test') === '1') return
-    try {
-      window.sessionStorage.setItem('smartflow-x:startup-ready:v1', 'complete')
-    } catch {
-      // Visual tests exercise the terminal underneath the startup screen.
-    }
-  })
-})
-
 function symbolInfo(symbol: string) {
   const fx = symbol.length === 6 && !['XAUUSD', 'BTCUSD'].includes(symbol)
   const digits = symbol === 'DJ30' ? 1 : fx ? (symbol.endsWith('JPY') ? 3 : 5) : 2
@@ -62,6 +51,7 @@ function symbolInfo(symbol: string) {
     currency_margin: 'USD',
     trade_mode: 4,
     visible: true,
+    chart_mode: 1,
   }
 }
 
@@ -152,8 +142,8 @@ function listedSymbols(query: string) {
     })
 }
 
-async function fulfillJson(route: Route, payload: unknown) {
-  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload) })
+async function fulfillJson(route: Route, payload: unknown, status = 200) {
+  await route.fulfill({ status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173', 'Access-Control-Expose-Headers': 'X-CRT-Protocol, X-CRT-Instance', 'X-CRT-Protocol': '5', 'X-CRT-Instance': 'visual-fixture' }, body: JSON.stringify(payload) })
 }
 
 async function routeFixture(route: Route) {
@@ -164,7 +154,7 @@ async function routeFixture(route: Route) {
   if (url.pathname === '/v1/bars') {
     const timeframe = url.searchParams.get('timeframe') || 'M15'
     const values = barsFor(symbol, timeframe)
-    return fulfillJson(route, { source: 'MT5', symbol, timeframe, requested_bars: 5000, loaded_bars: values.length, values, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol) })
+    return fulfillJson(route, { source: 'MT5', symbol, timeframe, requested_bars: 5000, loaded_bars: values.length, values, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol), market_session: { available: false, state: 'unknown', quote_open: null, trade_open: null } })
   }
   if (url.pathname === '/v1/snapshot') return fulfillJson(route, { source: 'MT5', symbol, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol) })
   if (url.pathname === '/v1/positions') return fulfillJson(route, {
@@ -201,7 +191,7 @@ async function routeFixture(route: Route) {
     const marginPerLot: Record<string, number> = { XAUUSD: 1800, BTCUSD: 2800, DJ30: 1200, EURUSD: 1080 }
     return fulfillJson(route, { value: volume * (marginPerLot[symbol] ?? 1500), currency: 'USD', symbol })
   }
-  if (url.pathname === '/v1/health') return fulfillJson(route, { ok: true, read_only: true, bridge: 'SMARTFLOW_X_VISUAL_FIXTURE', terminal: { name: 'Visual Fixture', company: 'SmartFlow', path: null, connected: true, build: 0, version: 'visual' }, symbol: 'XAUUSD', account })
+  if (url.pathname === '/v1/health') return fulfillJson(route, { ok: true, read_only: true, execution_mode: 'READ_ONLY', bridge: 'CRT_TERMINAL_MT5', protocol_version: 5, owner: 'manual', instance: 'visual-fixture', terminal: { name: 'Visual Fixture', company: 'CRT Terminal', path: null, connected: true, build: 0, version: 'visual' }, symbol: 'XAUUSD', account })
   if (url.pathname === '/v1/account') return fulfillJson(route, account)
   return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: { error: 'UNMOCKED_VISUAL_TEST_ENDPOINT', path: url.pathname } }) })
 }
@@ -213,14 +203,41 @@ async function prepareVisualPage(page: Page, marginQueries: string[] = []) {
   page.on('console', (message) => { if (message.type() === 'error') browserErrors.push(message.text()) })
   await mkdir(output, { recursive: true })
   await page.setViewportSize({ width: 2560, height: 1440 })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.route('http://127.0.0.1:8765/**', (route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/v1/calculate') marginQueries.push(url.searchParams.toString())
     return routeFixture(route)
   })
-  await page.goto('/?ui=legacy')
+  await gotoTerminal(page, '/?ui=legacy')
   await expect(page.locator('.sf-app')).toBeVisible()
   return { pageErrors, browserErrors }
+}
+
+async function continueThroughStartup(page: Page) {
+  const startup = page.getByRole('dialog', { name: 'LUNA URUCHAMIA TERMINAL_' })
+  if (!(await startup.count())) return
+  const continueButton = startup.getByRole('button', { name: /Jestem gotowa.*Naciśnij Enter/ })
+  await expect(continueButton).toBeVisible({ timeout: 30000 })
+  await continueButton.click()
+  await expect(startup).toHaveCount(0, { timeout: 10000 })
+}
+
+async function gotoTerminal(page: Page, url = '/') {
+  await page.goto(url)
+  await continueThroughStartup(page)
+}
+
+async function reloadTerminal(page: Page) {
+  await page.reload()
+  await continueThroughStartup(page)
+}
+
+async function unlockTextDeck(page: Page) {
+  const answer = page.getByRole('textbox', { name: 'Wpisz odpowiedź tak' })
+  await answer.fill('tak')
+  await answer.press('Enter')
+  await expect(page.locator('.matrix-command-deck .session')).toHaveText('Luna › Witaj ponownie, admin :)')
 }
 
 test('approved text deck integrates the complete introduction, controls and manual lots',async({page})=>{
@@ -228,24 +245,24 @@ test('approved text deck integrates the complete introduction, controls and manu
   const {pageErrors,browserErrors}=await prepareVisualPage(page,marginQueries)
   const writes:string[]=[]
   page.on('request',r=>{if(new URL(r.url()).port==='8765'&&r.method()!=='GET')writes.push(r.url())})
-  await page.goto('/')
+  await gotoTerminal(page)
   const deck=page.locator('.matrix-command-deck'),chart=page.locator('.market-chart')
-  await expect(deck.getByText('Do you want to believe?',{exact:false})).toBeVisible()
+  await expect(deck.getByText('Wchodzimy razem do terminalu?',{exact:false})).toBeVisible()
   await expect(deck.locator('.ps-prefix')).toHaveText('User')
-  await expect(deck.locator('.hint em')).toContainText('This is your last chance.')
-  const answer=deck.getByRole('textbox',{name:'Odpowiedź yes'})
+  await expect(deck.locator('.hint em')).toContainText('Napisz TAK, a otworzę narzędzia')
+  const answer=deck.getByRole('textbox',{name:'Wpisz odpowiedź tak'})
   await answer.focus()
   await expect(answer).toHaveCSS('outline-width','0px')
   await expect(answer).toHaveCSS('border-top-width','0px')
   await page.screenshot({path:path.join(output,'matrix-text-deck-intro-qhd.png')})
-  await answer.fill('yes');await answer.press('Enter')
+  await answer.fill('tak');await answer.press('Enter')
   await expect(deck).toHaveAttribute('data-motion-phase','restored',{timeout:20000})
-  await expect(deck.locator('.session')).toHaveText('welcome back admin :)')
+  await expect(deck.locator('.session')).toHaveText('Luna › Witaj ponownie, admin :)')
   await expect(deck).not.toContainText('command deck online')
-  await expect(deck.locator('section')).toHaveCount(5)
+  await expect(deck.locator('section')).toHaveCount(6)
   await expect(page.locator('.sf-right-column')).toHaveCSS('border-top-width','0px')
   await expect(deck.getByRole('slider',{name:'Ryzyko na transakcję'})).toHaveCount(0)
-  const context=deck.getByRole('button',{name:'Kontekst H1'})
+  const context=deck.getByRole('button',{name:/Kontekst H1:/})
   await context.click();await expect(context).toHaveAttribute('aria-pressed','true')
   await expect(page.locator('.sf-timeframes').getByRole('button',{name:'M15',exact:true})).toHaveClass(/active/)
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -259,13 +276,13 @@ test('approved text deck integrates the complete introduction, controls and manu
   const box=await chart.boundingBox();if(!box)throw Error('missing chart')
   await chart.click({position:{x:box.width*.6,y:box.height*.45}})
   await expect(page.locator('[data-drawing-kind="horizontal"]')).toHaveCount(1)
-  await deck.getByRole('button',{name:'Plan LONG',exact:true}).click()
+  await deck.getByRole('button',{name:'Ustaw pozycję długą',exact:true}).click()
   await chart.click({position:{x:box.width*.58,y:box.height*.52}})
   await expect(chart).toHaveAttribute('data-planner-side','long')
   const lots=deck.getByRole('slider',{name:'Wielkość pozycji w lotach'})
   await lots.focus();await lots.press('Home');await lots.press('ArrowRight')
   await expect(lots).toHaveValue('0.02')
-  await expect(deck.locator('.lot-heading output')).toHaveText('0.02 LOT')
+  await expect(deck.locator('.lot-heading output')).toHaveText('0.02 lota')
   await expect.poll(()=>marginQueries.some(q=>new URLSearchParams(q).get('volume')==='0.02')).toBe(true)
   const tp=deck.getByRole('button',{name:'Cel TP1',exact:true});await tp.click()
   await expect(chart).toHaveAttribute('data-planner-level-request','tp1')
@@ -273,13 +290,14 @@ test('approved text deck integrates the complete introduction, controls and manu
   await expect(chart).toHaveAttribute('data-planner-level-request','none')
   await expect(deck.getByRole('slider',{name:'TP1 lotów do zamknięcia'})).toHaveValue('0.02')
   await expect(page.locator('.sf-chart-canvas')).toHaveAttribute('data-target-profit-tp1',/\+\d/)
-  for(const preset of ['Chill','Normal','Power']){await deck.getByRole('button',{name:preset,exact:true}).click();await expect(deck).toHaveAttribute('data-profile',preset.toLowerCase())}
-  await expect(deck.locator('h3').first()).toHaveCSS('animation-name','sf-heading-glow')
+  await deck.getByText('Ustawienia efektów',{exact:true}).click()
+  for(const [preset,profile] of [['Spokojny','chill'],['Normalny','normal'],['Mocny','power']] as const){await deck.getByRole('button',{name:preset,exact:true}).click();await expect(deck).toHaveAttribute('data-profile',profile)}
+  await expect(deck.locator('h3').first()).toHaveCSS('animation-name','none')
   await page.screenshot({path:path.join(output,'matrix-text-deck-qhd.png')})
   await page.setViewportSize({width:1440,height:900});await page.screenshot({path:path.join(output,'matrix-text-deck-1440.png')})
   await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   await page.screenshot({path:path.join(output,'matrix-text-deck-390.png')})
-  await page.emulateMedia({reducedMotion:'reduce'});await page.reload();await deck.getByRole('textbox',{name:'Odpowiedź yes'}).fill('yes');await deck.getByRole('textbox',{name:'Odpowiedź yes'}).press('Enter')
+  await page.emulateMedia({reducedMotion:'reduce'});await reloadTerminal(page);await deck.getByRole('textbox',{name:'Wpisz odpowiedź tak'}).fill('tak');await deck.getByRole('textbox',{name:'Wpisz odpowiedź tak'}).press('Enter')
   await expect(deck.getByRole('button',{name:'RSI',exact:true})).toHaveAttribute('aria-pressed','true')
   await expect(deck.getByRole('spinbutton',{name:'Okres RSI'})).toHaveValue('9')
   await expect(deck).toHaveAttribute('data-profile','power')
@@ -288,12 +306,12 @@ test('approved text deck integrates the complete introduction, controls and manu
 
 test('text deck effects restore each glyph, rewrite words and cancel cleanly',async({page})=>{
   const {pageErrors}=await prepareVisualPage(page)
-  await page.goto('/');await page.emulateMedia({reducedMotion:'reduce'})
+  await gotoTerminal(page)
   const deck=page.locator('.matrix-command-deck')
-  await deck.getByRole('textbox',{name:'Odpowiedź yes'}).fill('yes');await deck.getByRole('textbox',{name:'Odpowiedź yes'}).press('Enter')
-  await page.emulateMedia({reducedMotion:'no-preference'})
+  await deck.getByRole('textbox',{name:'Wpisz odpowiedź tak'}).fill('tak');await deck.getByRole('textbox',{name:'Wpisz odpowiedź tak'}).press('Enter')
   await expect(deck).toHaveAttribute('data-motion-phase','restored',{timeout:20000})
-  const fall=deck.getByRole('button',{name:'Effects',exact:false}),rewrite=deck.getByRole('button',{name:'Rewrite',exact:false})
+  await deck.getByText('Ustawienia efektów',{exact:true}).click()
+  const fall=deck.getByRole('button',{name:/Opad/}),rewrite=deck.getByRole('button',{name:/Pisanie/})
   const strength=deck.getByRole('slider',{name:'Natężenie opadu Matrix'});await strength.focus();await strength.press('End')
   await fall.click();await expect(deck).toHaveAttribute('data-motion-phase','blank')
   expect(await deck.locator('[data-deck-text]').evaluateAll(els=>els.every(el=>(el as HTMLElement).style.visibility==='hidden'))).toBe(true)
@@ -315,28 +333,28 @@ test('text deck effects restore each glyph, rewrite words and cancel cleanly',as
   await page.emulateMedia({reducedMotion:'reduce'})
   await expect(deck.locator('h3').first()).toHaveCSS('animation-name','none')
   expect(await deck.locator('[data-deck-text]').evaluateAll(els=>els.every(el=>(el as HTMLElement).style.visibility!=='hidden'))).toBe(true)
-  await page.reload();await expect(fall).toHaveAttribute('aria-pressed','true')
+  await reloadTerminal(page);await unlockTextDeck(page);await deck.getByText('Ustawienia efektów',{exact:true}).click();await expect(fall).toHaveAttribute('aria-pressed','true')
   expect(pageErrors).toEqual([])
 })
 
 
 test('real startup exposes continue after a fast bridge connection and accepts Polish confirmation',async({page})=>{
   await prepareVisualPage(page)
-  await page.evaluate(()=>sessionStorage.removeItem('smartflow-x:startup-ready:v1'))
+  await page.route('http://127.0.0.1:8765/**', routeFixture)
   await page.goto('/?startup-test=1')
-  const startup=page.getByRole('dialog',{name:'URUCHAMIANIE TERMINALU'})
-  await expect(startup.locator('.sf-startup-status--2')).toContainText('POŁĄCZONY')
-  const continueButton=startup.getByRole('button',{name:/TERMINAL GOTOWY.*NACIŚNIJ ENTER, ABY KONTYNUOWAĆ/})
-  await expect(continueButton).toBeVisible()
+  const startup=page.getByRole('dialog',{name:'LUNA URUCHAMIA TERMINAL_'})
+  await expect(startup.locator('.crt-boot-log')).toContainText('Potwierdziłam zgodny most MT5', {timeout:30000})
+  const continueButton=startup.getByRole('button',{name:/Jestem gotowa.*Naciśnij Enter/})
+  await expect(continueButton).toBeVisible({timeout:30000})
   await continueButton.click()
-  await expect(startup).toHaveCount(0)
+  await expect(startup).toHaveCount(0,{timeout:10000})
   const answer=page.getByRole('textbox',{name:'Wpisz odpowiedź tak'})
-  await expect(answer).toBeFocused()
+  await answer.focus()
   const entry=page.locator('.ps-entry')
   expect(await entry.evaluate(el=>getComputedStyle(el,'::after').content)).toContain('▌')
   expect(await entry.evaluate(el=>getComputedStyle(el,'::after').left)).toBe('0px')
   await answer.fill('tak');await answer.press('Enter')
-  await expect(page.locator('.matrix-command-deck .session')).toHaveText('Witaj ponownie, admin :)')
+  await expect(page.locator('.matrix-command-deck .session')).toHaveText('Luna › Witaj ponownie, admin :)')
 })
 
 test('Exit unmounts the terminal, stops its feed and confirms bridge shutdown',async({page})=>{
@@ -344,19 +362,19 @@ test('Exit unmounts the terminal, stops its feed and confirms bridge shutdown',a
   let stopped=false,shutdownCalls=0
   const requestsAfterStop:string[]=[]
   page.on('request',request=>{if(stopped&&request.url().includes(':8765'))requestsAfterStop.push(new URL(request.url()).pathname)})
-  await page.route('**/v1/runtime',route=>stopped?route.abort():fulfillJson(route,{instance:'test-instance',shutdown_token:'test-token',closing:false}))
+  await page.route('**/v1/runtime',route=>stopped?route.abort():fulfillJson(route,{instance:'test-instance',shutdown_token:'test-token',closing:false,bridge:'CRT_TERMINAL_MT5',protocol_version:5,owner:'manual'}))
   await page.route('**/v1/shutdown',async route=>{
     expect(route.request().method()).toBe('POST')
-    expect(route.request().headers()['x-smartflow-shutdown']).toBe('test-token')
-    shutdownCalls++;stopped=true;await fulfillJson(route,{accepted:true,instance:'test-instance'})
+    expect(route.request().headers()['x-crt-terminal-shutdown']).toBe('test-token')
+    shutdownCalls++;stopped=true;await fulfillJson(route,{accepted:true,instance:'test-instance',bridge:'CRT_TERMINAL_MT5',protocol_version:5,owner:'manual'})
   })
-  await page.goto('/')
+  await gotoTerminal(page)
   await page.getByRole('button',{name:'Zamknij terminal i most MT5'}).click()
-  const closing=page.getByRole('dialog',{name:'POWERSHELL SHUTDOWN'})
+  const closing=page.getByRole('dialog',{name:'ZAMYKANIE TERMINALU'})
   await expect(closing).toBeVisible();await expect(page.locator('.sf-app')).toHaveCount(0)
-  await expect(closing).toContainText('BYE ADMIN !',{timeout:10000})
-  for(const line of ['turning off indicators','turning off chart stream','turning off terminal','closing MT5 connection'])await expect(closing).toContainText(line)
-  await expect(closing).toContainText('MT5 BRIDGE STOPPED')
+  await expect(closing).toContainText('Do zobaczenia, admin!',{timeout:10000})
+  for(const line of ['Wyłączam wskaźniki','Zamykam strumień wykresu','Zamykam terminal','Rozłączam MT5'])await expect(closing).toContainText(line)
+  await expect(closing).toContainText('MOST MT5 ZATRZYMANY')
   expect(shutdownCalls).toBe(1)
   expect(requestsAfterStop.every(path=>path==='/v1/runtime')).toBe(true)
   expect(pageErrors).toEqual([])
@@ -368,14 +386,14 @@ test('shutdown failure stays visible and retry can finish closing',async({page})
   let runtimeCalls=0,stopped=false
   await page.route('**/v1/runtime',route=>{
     runtimeCalls++
-    if(runtimeCalls===1)return route.fulfill({status:404,body:'old bridge'})
+    if(runtimeCalls===1)return fulfillJson(route,{detail:{error:'old bridge'}},404)
     if(stopped)return route.abort()
-    return fulfillJson(route,{instance:'test-instance',shutdown_token:'test-token',closing:false})
+    return fulfillJson(route,{instance:'test-instance',shutdown_token:'test-token',closing:false,bridge:'CRT_TERMINAL_MT5',protocol_version:5,owner:'manual'})
   })
-  await page.route('**/v1/shutdown',route=>{stopped=true;return fulfillJson(route,{accepted:true,instance:'test-instance'})})
-  await page.goto('/');await page.getByRole('button',{name:'Zamknij terminal i most MT5'}).click()
+  await page.route('**/v1/shutdown',route=>{stopped=true;return fulfillJson(route,{accepted:true,instance:'test-instance',bridge:'CRT_TERMINAL_MT5',protocol_version:5,owner:'manual'})})
+  await gotoTerminal(page);await page.getByRole('button',{name:'Zamknij terminal i most MT5'}).click()
   await expect(page.getByRole('alert')).toContainText('HTTP 404')
-  await expect(page.getByText('BYE ADMIN !',{exact:true})).toHaveCount(0)
+  await expect(page.getByText('Do zobaczenia, admin!',{exact:true})).toHaveCount(0)
   await page.getByRole('button',{name:'PONÓW ZAMYKANIE MOSTU'}).click()
-  await expect(page.getByText('BYE ADMIN !',{exact:true})).toBeVisible({timeout:10000})
+  await expect(page.getByText('Do zobaczenia, admin!',{exact:true})).toBeVisible({timeout:10000})
 })

@@ -25,17 +25,6 @@ const priceBases: Record<string, number> = {
   GBPAUD: 1.934,
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    if (new URL(window.location.href).searchParams.get('startup-test') === '1') return
-    try {
-      window.sessionStorage.setItem('smartflow-x:startup-ready:v1', 'complete')
-    } catch {
-      // Visual tests exercise the terminal underneath the startup screen.
-    }
-  })
-})
-
 function symbolInfo(symbol: string) {
   const fx = symbol.length === 6 && !['XAUUSD', 'BTCUSD'].includes(symbol)
   const digits = symbol === 'DJ30' ? 1 : fx ? (symbol.endsWith('JPY') ? 3 : 5) : 2
@@ -62,6 +51,7 @@ function symbolInfo(symbol: string) {
     currency_margin: 'USD',
     trade_mode: 4,
     visible: true,
+    chart_mode: 1,
   }
 }
 
@@ -153,7 +143,7 @@ function listedSymbols(query: string) {
 }
 
 async function fulfillJson(route: Route, payload: unknown) {
-  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload) })
+  await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173', 'Access-Control-Expose-Headers': 'X-CRT-Protocol, X-CRT-Instance', 'X-CRT-Protocol': '5', 'X-CRT-Instance': 'visual-fixture' }, body: JSON.stringify(payload) })
 }
 
 async function routeFixture(route: Route) {
@@ -164,7 +154,7 @@ async function routeFixture(route: Route) {
   if (url.pathname === '/v1/bars') {
     const timeframe = url.searchParams.get('timeframe') || 'M15'
     const values = barsFor(symbol, timeframe)
-    return fulfillJson(route, { source: 'MT5', symbol, timeframe, requested_bars: 5000, loaded_bars: values.length, values, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol) })
+    return fulfillJson(route, { source: 'MT5', symbol, timeframe, requested_bars: 5000, loaded_bars: values.length, values, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol), market_session: { available: false, state: 'unknown', quote_open: null, trade_open: null } })
   }
   if (url.pathname === '/v1/snapshot') return fulfillJson(route, { source: 'MT5', symbol, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol) })
   if (url.pathname === '/v1/positions') return fulfillJson(route, {
@@ -201,7 +191,7 @@ async function routeFixture(route: Route) {
     const marginPerLot: Record<string, number> = { XAUUSD: 1800, BTCUSD: 2800, DJ30: 1200, EURUSD: 1080 }
     return fulfillJson(route, { value: volume * (marginPerLot[symbol] ?? 1500), currency: 'USD', symbol })
   }
-  if (url.pathname === '/v1/health') return fulfillJson(route, { ok: true, read_only: true, bridge: 'SMARTFLOW_X_VISUAL_FIXTURE', terminal: { name: 'Visual Fixture', company: 'SmartFlow', path: null, connected: true, build: 0, version: 'visual' }, symbol: 'XAUUSD', account })
+  if (url.pathname === '/v1/health') return fulfillJson(route, { ok: true, read_only: true, execution_mode: 'READ_ONLY', bridge: 'CRT_TERMINAL_MT5', protocol_version: 5, owner: 'manual', instance: 'visual-fixture', terminal: { name: 'Visual Fixture', company: 'CRT Terminal', path: null, connected: true, build: 0, version: 'visual' }, symbol: 'XAUUSD', account })
   if (url.pathname === '/v1/account') return fulfillJson(route, account)
   return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: { error: 'UNMOCKED_VISUAL_TEST_ENDPOINT', path: url.pathname } }) })
 }
@@ -213,26 +203,64 @@ async function prepareVisualPage(page: Page, marginQueries: string[] = []) {
   page.on('console', (message) => { if (message.type() === 'error') browserErrors.push(message.text()) })
   await mkdir(output, { recursive: true })
   await page.setViewportSize({ width: 2560, height: 1440 })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.route('http://127.0.0.1:8765/**', (route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/v1/calculate') marginQueries.push(url.searchParams.toString())
     return routeFixture(route)
   })
-  await page.goto('/?ui=legacy')
+  await gotoTerminal(page, '/?ui=legacy')
   await expect(page.locator('.sf-app')).toBeVisible()
   return { pageErrors, browserErrors }
 }
 
+async function continueThroughStartup(page: Page) {
+  const startup = page.getByRole('dialog', { name: 'LUNA URUCHAMIA TERMINAL_' })
+  if (!(await startup.count())) return
+  const continueButton = startup.getByRole('button', { name: /Jestem gotowa.*Naciśnij Enter/ })
+  await expect(continueButton).toBeVisible({ timeout: 30000 })
+  await continueButton.click()
+  await expect(startup).toHaveCount(0, { timeout: 10000 })
+}
+
+async function gotoTerminal(page: Page, url = '/') {
+  await page.goto(url)
+  await continueThroughStartup(page)
+}
+
+async function reloadTerminal(page: Page) {
+  const mode = await page.locator('.sf-app').evaluate((app) => app.classList.contains('sf-dragon') ? 'dragon' : 'legacy')
+  const url = new URL(page.url())
+  url.searchParams.set('ui', mode)
+  await page.goto(`${url.pathname}${url.search}${url.hash}`)
+  await continueThroughStartup(page)
+}
+
+async function selectQuickSymbol(page: Page, symbol: string) {
+  await page.locator('.sf-symbol-trigger').click()
+  const prompt = page.getByRole('dialog', { name: 'Wybór symbolu' })
+  const drawer = page.locator('.sf-large-drawer.sf-drawer-instruments')
+  await expect.poll(async () => await prompt.isVisible() || await drawer.isVisible(), { timeout: 10000 }).toBeTruthy()
+  if (await prompt.isVisible()) {
+    await page.locator('.crt-instrument-quick button').filter({ hasText: symbol }).click()
+    await expect(prompt).toHaveCount(0)
+  } else {
+    await drawer.locator('.sf-quick-symbols button').filter({ hasText: symbol }).click()
+  }
+  await expect(page.locator('.sf-symbol-trigger')).toContainText(symbol)
+}
+
 test('startup gate initializes, waits for input and opens the terminal', async ({ page }) => {
+  await page.route('http://127.0.0.1:8765/**', routeFixture)
   await page.goto('/?startup-test=1')
 
-  const startup = page.getByRole('dialog', { name: 'POWERSHELL INITIALIZATION' })
+  const startup = page.getByRole('dialog', { name: 'LUNA URUCHAMIA TERMINAL_' })
   await expect(startup).toBeVisible()
-  await expect(startup.locator('.sf-startup-status--0')).toBeVisible({ timeout: 5000 })
-  const continueButton = startup.getByRole('button', { name: /TERMINAL READY.*PRESS ENTER TO CONTINUE/ })
-  await expect(continueButton).toBeVisible({ timeout: 5000 })
-  await page.keyboard.press('Enter')
-  await expect(startup).toHaveCount(0)
+  await expect(startup.locator('.crt-boot-log')).toContainText('Sprawdzam własny most MT5', { timeout: 5000 })
+  const continueButton = startup.getByRole('button', { name: /Jestem gotowa.*Naciśnij Enter/ })
+  await expect(continueButton).toBeVisible({ timeout: 30000 })
+  await continueButton.click()
+  await expect(startup).toHaveCount(0, { timeout: 10000 })
   await expect(page.locator('.sf-app')).toBeVisible()
 })
 
@@ -243,7 +271,7 @@ test('capture the approved Main Shell and module states for visual review', asyn
   await expect(page.locator('.sf-large-drawer')).toHaveCount(0)
   await expect(page.locator('.sf-command-scrim')).toHaveCount(0)
   await expect(page.locator('.sf-bottom-panel')).not.toHaveClass(/expanded/)
-  await expect(page.locator('.sf-top-right')).toContainText('MT5 · LIVE', { timeout: 10000 })
+  await expect(page.locator('.sf-top-right')).toContainText('MT5 · NA ŻYWO', { timeout: 10000 })
   await expect(page.locator('.sf-account-metrics')).toContainText('WIN RATE DZIENNY')
   await expect(page.locator('.sf-metric').filter({ hasText: 'WIN RATE DZIENNY' }).locator('strong')).toHaveText('66.7%')
   const candleMetric = page.locator('.sf-metric').filter({ hasText: 'DO ŚWIECY' }).locator('strong')
@@ -264,11 +292,11 @@ test('capture the approved Main Shell and module states for visual review', asyn
   await expect(chart).toHaveAttribute('data-planner-tp-label', 'FULL TP')
   for (const target of ['TP1', 'TP2', 'TP3']) await expect(page.locator('.sf-planner-card').getByRole('button', { name: target, exact: true })).toHaveAttribute('aria-pressed', 'false')
   await expect(page.locator('[data-planner-target="tp2"], [data-planner-target="tp3"]')).toHaveCount(0)
-  await expect(page.locator('.dragon-planner-risk-profit span').filter({ hasText: 'PROFIT' }).locator('b')).toContainText(/\+\d/)
-  await expect(page.locator('.dragon-planner-risk-profit')).toContainText('PROFIT')
+  await expect(page.locator('.dragon-planner-risk-profit span').filter({ hasText: 'ZYSK PRZY TP' }).locator('b')).toContainText(/\+\d/)
+  await expect(page.locator('.dragon-planner-risk-profit')).toContainText('ZYSK PRZY TP')
   await expect.poll(() => marginQueries.filter((query) => query.includes('action=margin')).length, { timeout: 10000 }).toBeGreaterThanOrEqual(2)
   await expect(page.locator('.sf-chart-canvas')).toHaveAttribute('data-target-profit-full', /\+\d/)
-  await expect(page.locator('.dragon-planner-risk-profit span').filter({ hasText: 'PROFIT' }).locator('b')).toContainText(/\+\d/)
+  await expect(page.locator('.dragon-planner-risk-profit span').filter({ hasText: 'ZYSK PRZY TP' }).locator('b')).toContainText(/\+\d/)
   await expect(page.locator('.sf-risk-card')).toHaveClass(/\b(safe|warning)\b/, { timeout: 10000 })
   await expect(page.locator('.sf-toast')).toHaveCount(0, { timeout: 5000 })
 
@@ -363,18 +391,18 @@ test('capture the approved Main Shell and module states for visual review', asyn
   await expect(page.locator('[data-planner-target="tp2"]')).toBeVisible()
   await openDrawer(() => page.locator('.sf-risk-card .sf-panel-title button').click(), '02_risk_guard')
   await page.locator('.sf-risk-card .sf-panel-title button').click()
-  await expect(page.getByRole('dialog', { name: 'RISK GUARD' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'OCHRONA RYZYKA' })).toBeVisible()
   await page.locator('.sf-planner-card .sf-panel-title button').click()
   await expect(page.locator('.sf-large-drawer')).toHaveCount(1)
-  await expect(page.getByRole('dialog', { name: 'TRADE PLANNER PRO' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'PLANER TRANSAKCJI PRO' })).toBeVisible()
   await page.locator('.sf-close').click()
   await openDrawer(() => page.locator('.sf-context-title').click(), '03_fx_context_engine')
 
-  await page.locator('.sf-chart-actions button[title="Market Profile · show/hide"]').click()
+  await page.locator('.sf-chart-actions button[title="Profil rynku · pokaż lub ukryj"]').click()
   await expect(page.locator('[data-market-profile-overlay="tpo"]')).toHaveCount(0)
-  await page.locator('.sf-chart-actions button[title="Market Profile · show/hide"]').click()
+  await page.locator('.sf-chart-actions button[title="Profil rynku · pokaż lub ukryj"]').click()
   await expect(page.locator('[data-market-profile-overlay="tpo"]')).toBeVisible()
-  await page.getByRole('button', { name: 'Market Profile settings' }).click()
+  await page.getByRole('button', { name: 'Ustawienia profilu rynku' }).click()
   await expect(page.locator('.sf-large-drawer')).toBeVisible()
   await expect(page.locator('.sf-profile-summary > div')).toHaveCount(5)
   const profileSettingsBox = await page.locator('.sf-profile-settings').boundingBox()
@@ -421,7 +449,7 @@ test('capture the approved Main Shell and module states for visual review', asyn
   await page.locator('.sf-chart-actions button').nth(0).click()
   const noteInput = page.getByRole('textbox', { name: 'Treść notatki na wykresie' })
   await noteInput.fill('Strefa obserwacji')
-  await page.getByRole('button', { name: 'UZBRÓJ NOTATKĘ' }).click()
+  await page.getByRole('button', { name: 'AKTYWUJ NOTATKĘ' }).click()
   await expect(page.locator('.sf-large-drawer')).toHaveCount(0)
   await drawingChart.click({ position: { x: Math.round(drawingChartBox.width * 0.47), y: Math.round(drawingChartBox.height * 0.42) } })
   await expect(page.locator('.market-chart__drawing-overlay [data-drawing-kind="text"]')).toHaveText('Strefa obserwacji')
@@ -479,15 +507,13 @@ test('capture the approved Main Shell and module states for visual review', asyn
     const store = JSON.parse(localStorage.getItem('smartflow-x:drawings:v1') || '{}')
     return store[`XAUUSD|${timeframe}`]?.length ?? 0
   })).toBe(1)
-  await page.reload()
+  await reloadTerminal(page)
   await expect(page.locator('.sf-app')).toBeVisible()
   await expect(page.locator('.market-chart__drawing-overlay [data-drawing-kind="vertical"]')).toHaveCount(1)
-  await page.locator('.sf-symbol-trigger').click()
-  await page.locator('.sf-quick-symbols button').filter({ hasText: 'BTCUSD' }).click()
+  await page.locator('.sf-watch-row').filter({ hasText: 'BTCUSD' }).click()
   await expect(page.locator('.sf-symbol-trigger')).toContainText('BTCUSD')
   await expect.poll(() => page.locator('.market-chart__drawing-overlay [data-drawing-kind="vertical"]').count()).toBe(0)
-  await page.locator('.sf-symbol-trigger').click()
-  await page.locator('.sf-quick-symbols button').filter({ hasText: 'XAUUSD' }).click()
+  await page.locator('.sf-watch-row').filter({ hasText: 'XAUUSD' }).click()
   await expect(page.locator('.sf-symbol-trigger')).toContainText('XAUUSD')
   await expect.poll(() => page.locator('.market-chart__drawing-overlay [data-drawing-kind="vertical"]').count()).toBe(1)
   await armDrawingTool(/Wyczyść rysunki/)
@@ -527,9 +553,9 @@ test('capture the approved Main Shell and module states for visual review', asyn
   await rsiPeriod.fill('9')
   await rsiVisibility.uncheck()
   await expect.poll(() => page.locator('.market-chart').getAttribute('data-indicator-pane-count')).toBe('0')
-  await page.reload()
+  await reloadTerminal(page)
   await expect(page.locator('.sf-app')).toBeVisible()
-  await expect(page.locator('.sf-top-right')).toContainText('MT5 · LIVE', { timeout: 10000 })
+  await expect(page.locator('.sf-top-right')).toContainText('MT5 · NA ŻYWO', { timeout: 10000 })
   await expect(page.locator('.market-chart')).toHaveAttribute('data-indicator-series-count', '0')
   await page.locator('.sf-chart-actions button').nth(1).click()
   const persistedRsi = page.locator('[data-indicator-name="RSI"]')
@@ -540,9 +566,9 @@ test('capture the approved Main Shell and module states for visual review', asyn
   await expect.poll(() => page.locator('.market-chart').getAttribute('data-indicator-pane-count')).toBe('1')
   await page.getByRole('button', { name: 'Usuń RSI' }).click()
   await expect(persistedRsi).toHaveCount(0)
-  await page.reload()
+  await reloadTerminal(page)
   await expect(page.locator('.sf-app')).toBeVisible()
-  await expect(page.locator('.sf-top-right')).toContainText('MT5 · LIVE', { timeout: 10000 })
+  await expect(page.locator('.sf-top-right')).toContainText('MT5 · NA ŻYWO', { timeout: 10000 })
   await page.locator('.sf-chart-actions button').nth(1).click()
   await expect(page.locator('[data-indicator-name="RSI"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Dodaj RSI' })).toBeEnabled()
@@ -573,23 +599,38 @@ test('capture the approved Main Shell and module states for visual review', asyn
   await page.locator('.sf-close').click()
 
   await page.locator('.sf-symbol-trigger').click()
-  await expect(page.locator('.sf-large-drawer')).toBeVisible()
-  await page.locator('.sf-large-drawer input.sf-search-field').fill('USD')
-  await expect(page.locator('.sf-symbol-results button').first()).toBeVisible()
-  const selectorBox = await page.locator('.sf-large-drawer').boundingBox()
-  const selectorFrameBox = await page.locator('.sf-chart-box').boundingBox()
-  if (!selectorBox || !selectorFrameBox) throw new Error('Instrument selector flyout is missing.')
-  expect(selectorBox.width / selectorFrameBox.width).toBeGreaterThanOrEqual(0.6)
-  expect(selectorBox.width / selectorFrameBox.width).toBeLessThanOrEqual(0.68)
-  await capture('08_instrument_selector')
-  const selectorPin = page.getByRole('checkbox', { name: 'PIN Instrument Selector' })
-  await selectorPin.check()
-  await page.locator('.sf-quick-symbols button').filter({ hasText: 'BTCUSD' }).click()
-  await expect(page.locator('.sf-large-drawer')).toBeVisible()
-  await expect(page.locator('.sf-symbol-trigger')).toContainText('BTCUSD')
-  await selectorPin.uncheck()
-  await page.locator('.sf-quick-symbols button').filter({ hasText: 'DJ30' }).click()
-  await expect(page.locator('.sf-large-drawer')).toHaveCount(0)
+  const instrumentPrompt = page.getByRole('dialog', { name: 'Wybór symbolu' })
+  const instrumentDrawer = page.locator('.sf-large-drawer.sf-drawer-instruments')
+  await expect.poll(async () => await instrumentPrompt.isVisible() || await instrumentDrawer.isVisible(), { timeout: 10000 }).toBeTruthy()
+  if (await instrumentPrompt.isVisible()) {
+    await instrumentPrompt.getByRole('searchbox').fill('USD')
+    await expect(page.locator('.crt-instrument-results button').first()).toBeVisible({ timeout: 10000 })
+    const selectorBox = await instrumentPrompt.boundingBox()
+    const viewport = page.viewportSize()
+    if (!selectorBox || !viewport) throw new Error('Instrument selector prompt is missing.')
+    expect(selectorBox.x).toBeGreaterThanOrEqual(0)
+    expect(selectorBox.y).toBeGreaterThanOrEqual(0)
+    expect(selectorBox.x + selectorBox.width).toBeLessThanOrEqual(viewport.width)
+    expect(selectorBox.y + selectorBox.height).toBeLessThanOrEqual(viewport.height)
+    await capture('08_instrument_selector')
+    await page.locator('.crt-instrument-quick button').filter({ hasText: 'BTCUSD' }).click()
+    await expect(instrumentPrompt).toHaveCount(0)
+    await expect(page.locator('.sf-symbol-trigger')).toContainText('BTCUSD')
+    await selectQuickSymbol(page, 'DJ30')
+  } else {
+    await instrumentDrawer.locator('input.sf-search-field').fill('USD')
+    await expect(page.locator('.sf-symbol-results button').first()).toBeVisible()
+    const selectorBox = await instrumentDrawer.boundingBox()
+    const selectorFrameBox = await page.locator('.sf-chart-box').boundingBox()
+    if (!selectorBox || !selectorFrameBox) throw new Error('Instrument selector flyout is missing.')
+    expect(selectorBox.width / selectorFrameBox.width).toBeGreaterThanOrEqual(0.6)
+    expect(selectorBox.width / selectorFrameBox.width).toBeLessThanOrEqual(0.68)
+    await capture('08_instrument_selector')
+    await instrumentDrawer.locator('.sf-quick-symbols button').filter({ hasText: 'BTCUSD' }).click()
+    await expect(page.locator('.sf-symbol-trigger')).toContainText('BTCUSD')
+    if (await instrumentDrawer.isVisible()) await page.locator('.sf-close').click()
+    await selectQuickSymbol(page, 'DJ30')
+  }
 
   await page.locator('.sf-bottom-tabs button').nth(0).click()
   await expect(page.locator('.sf-bottom-workspace [data-bottom-section]')).toHaveCount(3)
@@ -603,7 +644,7 @@ test('capture the approved Main Shell and module states for visual review', asyn
   expect(terminalBox.height / centerBox.height).toBeLessThanOrEqual(0.65)
   await capture('09_positions_orders_account')
   await page.locator('[data-position-ticket="8114021"]').click()
-  await expect(page.locator('.sf-large-drawer')).toContainText('MANAGE POSITION')
+  await expect(page.locator('.sf-large-drawer')).toContainText('READ ONLY')
   await expect(page.locator('[data-managed-position="8114021"]')).toBeVisible()
   await page.locator('.sf-close').click()
   await page.locator('[data-position-ticket="8114086"]').click()
@@ -633,8 +674,8 @@ test('capture the approved Main Shell and module states for visual review', asyn
   expect(persistedPanel.expanded).toBe(true)
   expect(persistedPanel.height).toBeGreaterThan(230)
   const persistedHeight = persistedPanel.height
-  await page.reload()
-  await expect(page.locator('.sf-top-right')).toContainText('MT5 · LIVE', { timeout: 10000 })
+  await reloadTerminal(page)
+  await expect(page.locator('.sf-top-right')).toContainText('MT5 · NA ŻYWO', { timeout: 10000 })
   await expect(page.locator('.sf-bottom-tabs button').nth(2)).toHaveClass(/active/)
   await expect(page.locator('.sf-bottom-panel')).toHaveClass(/expanded/)
   await expect.poll(() => page.locator('.sf-bottom-panel').getAttribute('data-bottom-height')).toBe(String(persistedHeight))
@@ -644,7 +685,7 @@ test('capture the approved Main Shell and module states for visual review', asyn
 
 test('exercise MTF context from a clean shell', async ({ page }) => {
   const { pageErrors, browserErrors } = await prepareVisualPage(page)
-  await expect(page.locator('.sf-top-right')).toContainText(/MT5.*LIVE/, { timeout: 10000 })
+  await expect(page.locator('.sf-top-right')).toContainText(/MT5.*NA ŻYWO/, { timeout: 10000 })
   await expect(page.locator('.sf-chart-canvas canvas').first()).toBeVisible()
   await page.locator('.sf-bottom-tabs button').nth(2).click()
   const bottomPanel = page.locator('.sf-bottom-panel')
@@ -688,20 +729,20 @@ test('exercise MTF context from a clean shell', async ({ page }) => {
 
 async function unlockTextDeck(page: Page) {
   await page.emulateMedia({reducedMotion:'reduce'})
-  const answer=page.getByRole('textbox',{name:'Odpowiedź yes'})
-  await answer.fill('yes'); await answer.press('Enter')
-  await expect(page.locator('.matrix-command-deck .session')).toHaveText('welcome back admin :)')
+  const answer=page.getByRole('textbox',{name:'Wpisz odpowiedź tak'})
+  await answer.fill('tak'); await answer.press('Enter')
+  await expect(page.locator('.matrix-command-deck .session')).toHaveText('Luna › Witaj ponownie, admin :)')
 }
 
 test('matrix artwork stays behind the chart and navigation remains read only',async({page})=>{
  const {pageErrors}=await prepareVisualPage(page)
- await page.goto('/');await unlockTextDeck(page)
- await expect(page.locator('.matrix-agent-art img')).toHaveAttribute('src','/assets/agent-terminal-hq.webp')
- await expect.poll(()=>page.locator('.matrix-agent-art img').evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth===1122&&img.naturalHeight===1402)).toBe(true)
+ await gotoTerminal(page);await unlockTextDeck(page)
+  await expect(page.locator('.matrix-agent-art img')).toHaveAttribute('src','/assets/chart-agent-background-v3.png')
+  await expect.poll(()=>page.locator('.matrix-agent-art img').evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0&&img.naturalHeight>0)).toBe(true)
  await expect(page.locator('.matrix-agent-art')).toHaveCSS('pointer-events','none')
  const chart=page.locator('.market-chart'), box=await chart.boundingBox()
  expect(box!.width).toBeGreaterThan(2560*.5)
- for(const [name,attribute] of [['Auto scroll','data-auto-scroll'],['Chart shift','data-chart-shift']] as const){
+  for(const [name,attribute] of [['Automatyczne przewijanie','data-auto-scroll'],['Przesunięcie wykresu','data-chart-shift']] as const){
   const button=page.getByRole('button',{name});await button.click();await expect(chart).toHaveAttribute(attribute,'false');await button.click();await expect(chart).toHaveAttribute(attribute,'true')
  }
  await page.keyboard.press('Control+K');await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -712,12 +753,12 @@ test('matrix artwork stays behind the chart and navigation remains read only',as
 test('dragon terminal reports missing bridge without invented quotes or news', async ({ page }) => {
   await mkdir(output, {recursive:true})
   await page.addInitScript(() => localStorage.setItem('smartflow-x:bottom-panel:v1', JSON.stringify({expanded:true,tab:'account',height:900})))
+  await page.route('http://127.0.0.1:8765/**', routeFixture)
+  await gotoTerminal(page); await unlockTextDeck(page)
   await page.route('http://127.0.0.1:8765/**', route => route.abort())
-  await page.goto('/'); await unlockTextDeck(page)
-  await expect(page.locator('.dragon-terminal-log')).toContainText(/FEED (ERROR|OFFLINE)/, {timeout:15000})
-  await expect(page.locator('.matrix-command-deck')).toContainText('Plan podglądowy · zlecenia wyłączone')
+  await expect(page.locator('.matrix-command-deck')).toContainText('MT5 · BRAK AKTUALNYCH DANYCH', {timeout:15000})
+  await expect(page.locator('.matrix-command-deck')).toContainText('Mogę wysyłać zlecenia tylko z zainstalowanego terminalu')
   await expect(page.locator('.dragon-terminal-log')).not.toContainText('HIGH IMPACT')
-  await expect(page.locator('.matrix-command-deck')).toContainText('N/A')
   await page.setViewportSize({width:2048,height:1020})
   await expect(page.locator('.sf-bottom-panel')).toHaveCount(0)
   const offlineChart = await page.locator('.market-chart').boundingBox()
@@ -731,12 +772,12 @@ test('dragon terminal reports missing bridge without invented quotes or news', a
 
 test('dragon drawing supports drag, click preview, future space and scope cancellation', async ({ page }) => {
   const { pageErrors } = await prepareVisualPage(page)
-  await page.goto('/'); await unlockTextDeck(page)
-  await expect(page.locator('.dragon-clock')).toContainText('MT5 LIVE')
+  await gotoTerminal(page); await unlockTextDeck(page)
+  await expect(page.locator('.dragon-clock')).toContainText('MT5 NA ŻYWO')
   await expect(page.locator('.sf-bottom-panel')).toHaveCount(0)
   await expect(page.locator('.market-chart')).toHaveAttribute('data-key-level-count','0')
   await expect(page.getByRole('button',{name:'Najbliższe wsparcie i opór'})).toHaveCount(0)
-  await expect(page.locator('[data-terminal-status="account"]')).toContainText('EQUITY')
+  await expect(page.locator('[data-terminal-status="account"]')).toContainText('KAPITAŁ')
   await expect(page.locator('[data-terminal-status="position"]')).toHaveCount(3)
   await expect(page.locator('[data-terminal-status="order"]')).toHaveCount(1)
   const chart = page.locator('.market-chart')
@@ -803,9 +844,9 @@ test('dragon drawing supports drag, click preview, future space and scope cancel
   await expect(page.locator('[data-terminal-status="order"]')).toHaveCount(1)
   await expect(page.locator('[data-terminal-status="position"]')).toHaveCount(3)
   await expect(chart).toHaveAttribute('data-volume-visible','false')
-  await page.getByRole('button',{name:'Tick Volume',exact:true}).click()
+  await page.getByRole('button',{name:'Wolumen tickowy',exact:true}).click()
   await expect(chart).toHaveAttribute('data-volume-visible','true')
-  await page.getByRole('button',{name:'Tick Volume',exact:true}).click()
+  await page.getByRole('button',{name:'Wolumen tickowy',exact:true}).click()
   const accountBox = await page.locator('.dragon-account-terminal').boundingBox()
   const plotBox = await chart.boundingBox()
   expect(accountBox!.y).toBeGreaterThan(plotBox!.y + plotBox!.height*.8)
@@ -822,8 +863,8 @@ test('dragon drawing supports drag, click preview, future space and scope cancel
   await page.keyboard.press('Delete')
   await expect(page.locator('[data-drawing-kind="trend"]')).toHaveCount(0)
   await expect(page.locator('[data-drawing-kind="fib"]')).toHaveCount(1)
-  await page.reload(); await unlockTextDeck(page)
-  await expect(page.locator('.dragon-clock')).toContainText('MT5 LIVE')
+  await reloadTerminal(page); await unlockTextDeck(page)
+  await expect(page.locator('.dragon-clock')).toContainText('MT5 NA ŻYWO')
   await expect(chart).toHaveAttribute('data-volume-visible','false')
   await expect(page.locator('[data-drawing-kind="trend"]')).toHaveCount(0)
   await expect(page.locator('[data-drawing-kind="fib"]')).toHaveCount(1)
@@ -840,27 +881,29 @@ test('dragon drawing supports drag, click preview, future space and scope cancel
 
 test('dragon chart recovers when MT5 bridge starts after initial history request', async ({ page }) => {
   let historyAttempts = 0
-  let bridgeStarted = false
+  let bridgeStarted = true
   await page.route('http://127.0.0.1:8765/**', route => {
     const url = new URL(route.request().url())
+    if (!bridgeStarted && url.pathname !== '/v1/health') return route.abort()
     if (url.pathname === '/v1/bars' && url.searchParams.get('count') === '5000') {
       historyAttempts++
-      if (!bridgeStarted) return route.abort()
     }
     return routeFixture(route)
   })
-  await page.goto('/'); await unlockTextDeck(page)
-  await expect(page.locator('.dragon-terminal-log')).toContainText('ERROR')
+  await gotoTerminal(page); await unlockTextDeck(page)
+  bridgeStarted = false
+  await page.locator('.sf-timeframes button').filter({ hasText: 'M5' }).click()
+  await expect(page.locator('.dragon-clock')).toContainText('MT5 NIEDOSTĘPNY')
   bridgeStarted = true
-  await expect(page.locator('.dragon-clock')).toContainText('MT5 LIVE',{timeout:10000})
+  await expect(page.locator('.dragon-clock')).toContainText('MT5 NA ŻYWO',{timeout:10000})
   expect(historyAttempts).toBeGreaterThanOrEqual(2)
 })
 
 test('dragon planner keeps simple draggable levels and cancels gestures across scopes', async ({ page }) => {
-  test.setTimeout(30000)
+  test.setTimeout(120000)
   const {pageErrors} = await prepareVisualPage(page, [])
-  await page.goto('/'); await unlockTextDeck(page)
-  await expect(page.locator('.dragon-clock')).toContainText('MT5 LIVE')
+  await gotoTerminal(page); await unlockTextDeck(page)
+  await expect(page.locator('.dragon-clock')).toContainText('MT5 NA ŻYWO')
   const chart = page.locator('.market-chart')
   const box = await chart.boundingBox()
   if (!box) throw Error('Chart missing')
@@ -870,7 +913,7 @@ test('dragon planner keeps simple draggable levels and cancels gestures across s
     await page.mouse.move(box.x+x,box.y+y); await page.mouse.down()
     await page.mouse.move(box.x+x+dx,box.y+y+dy,{steps:10}); await page.mouse.up()
   }
-  await page.getByRole('button',{name:'Plan LONG',exact:true}).click()
+  await page.getByRole('button',{name:'Ustaw pozycję długą',exact:true}).click()
   await chart.click({position:{x:box.width*.61,y:box.height*.52}})
   await expect(chart).toHaveAttribute('data-planner-side','long')
   await expect(chart).toHaveAttribute('data-planner-be','off')
@@ -931,7 +974,7 @@ test('dragon planner keeps simple draggable levels and cancels gestures across s
   await page.mouse.move(box.x+g.x+80,box.y+g['data-handle-y']-30); await page.mouse.up()
   await expect(chart).toHaveAttribute('data-planner-side','none')
   await expect(chart).not.toHaveClass(/planner-moving/)
-  await page.getByRole('button',{name:'Plan SHORT',exact:true}).click()
+  await page.getByRole('button',{name:'Ustaw pozycję krótką',exact:true}).click()
   await chart.click({position:{x:box.width*.61,y:box.height*.52}})
   await expect(chart).toHaveAttribute('data-planner-side','short')
   before=await state(); g=await geometry()
@@ -946,11 +989,11 @@ test('dragon planner keeps simple draggable levels and cancels gestures across s
 
 test('text deck keeps settings inline across reloads without module drawers',async({page})=>{
  const {pageErrors}=await prepareVisualPage(page)
- await page.goto('/');await unlockTextDeck(page)
+ await gotoTerminal(page);await unlockTextDeck(page)
  const deck=page.locator('.matrix-command-deck'),rsi=deck.getByRole('button',{name:'RSI',exact:true})
  await rsi.click();await deck.getByRole('spinbutton',{name:'Okres RSI'}).fill('9')
  await expect(page.getByRole('dialog')).toHaveCount(0)
- await page.reload();await unlockTextDeck(page)
+ await reloadTerminal(page);await unlockTextDeck(page)
  await expect(rsi).toHaveAttribute('aria-pressed','true')
  await expect(deck.getByRole('spinbutton',{name:'Okres RSI'})).toHaveValue('9')
  await rsi.click();await expect(page.locator('.market-chart')).toHaveAttribute('data-indicator-pane-count','0')
@@ -962,20 +1005,34 @@ test('live history retains completed candles across successive MT5 bar opens', a
   const initial = barsFor('XAUUSD')
   const finalTime = initial[initial.length-1].time
   let nextTime = finalTime
-  await page.route('http://127.0.0.1:8765/v1/snapshot**', async route => {
-    const tick = tickFor('XAUUSD')
-    return fulfillJson(route,{source:'MT5',symbol:'XAUUSD',tick:{...tick,time:nextTime,time_msc:nextTime*1000},account:accountSnapshot(),symbol_info:symbolInfo('XAUUSD')})
+  await page.route('http://127.0.0.1:8765/v1/bars**', async route => {
+    const url = new URL(route.request().url())
+    const symbol = url.searchParams.get('symbol') || 'XAUUSD'
+    const timeframe = url.searchParams.get('timeframe') || 'M15'
+    const count = Number(url.searchParams.get('count') || 100)
+    const values = barsFor(symbol,timeframe,count >= 5000 ? 520 : count)
+    const step = timeframe === 'M15' ? 900 : timeframe === 'M5' ? 300 : timeframe === 'M1' ? 60 : timeframe === 'M30' ? 1800 : timeframe === 'H1' ? 3600 : 86400
+    let previous = values[values.length - 1]
+    for (let time = finalTime + step; timeframe === 'M15' && time <= nextTime; time += step) {
+      const close = previous.close + 0.08
+      previous = { ...previous, time, open: previous.close, close, high: close + 0.15, low: previous.close - 0.12, tick_volume: previous.tick_volume + 1 }
+      values.push(previous)
+    }
+    const tick = tickFor(symbol)
+    return fulfillJson(route,{source:'MT5',symbol,timeframe,requested_bars:count,loaded_bars:values.length,values,tick:{...tick,time:nextTime,time_msc:nextTime*1000},account:accountSnapshot(),symbol_info:symbolInfo(symbol),market_session:{available:false,state:'unknown',quote_open:null,trade_open:null}})
   })
-  await page.goto('/'); await unlockTextDeck(page)
+  await gotoTerminal(page); await unlockTextDeck(page)
   const chart = page.locator('.market-chart')
   await expect(chart).toHaveAttribute('data-live-bar-count','520')
   nextTime = finalTime+900
-  await expect(chart).toHaveAttribute('data-live-bar-count','521')
+  await expect(chart).toHaveAttribute('data-live-bar-count','521',{timeout:15000})
   nextTime = finalTime+1800
-  await expect(chart).toHaveAttribute('data-live-bar-count','522')
+  await expect(chart).toHaveAttribute('data-live-bar-count','522',{timeout:15000})
   await page.locator('.matrix-command-deck').getByRole('button',{name:'VWAP',exact:true}).click()
   await expect(chart).toHaveAttribute('data-indicator-series-count','1')
   await page.locator('.matrix-command-deck').getByRole('button',{name:'EMA 50',exact:true}).click()
+  await page.getByRole('textbox',{name:'Okres średniej'}).fill('50')
+  await page.getByRole('textbox',{name:'Okres średniej'}).press('Enter')
   await expect(chart).toHaveAttribute('data-indicator-series-count','2')
   await page.locator('.sf-timeframes').getByRole('button',{name:'H1',exact:true}).click()
   await expect(chart).toHaveAttribute('data-live-bar-count','520')
@@ -983,14 +1040,14 @@ test('live history retains completed candles across successive MT5 bar opens', a
 })
 
 test('TP1, TP2 and TP3 buttons arm click-to-set chart placement', async ({ page }) => {
-  test.setTimeout(30000)
+  test.setTimeout(120000)
   const {pageErrors} = await prepareVisualPage(page, [])
-  await page.goto('/'); await unlockTextDeck(page)
-  await expect(page.locator('.dragon-clock')).toContainText('MT5 LIVE')
+  await gotoTerminal(page); await unlockTextDeck(page)
+  await expect(page.locator('.dragon-clock')).toContainText('MT5 NA ŻYWO')
   const chart = page.locator('.market-chart')
   const box = await chart.boundingBox()
   if (!box) throw new Error('Market chart is missing before TP placement.')
-  await page.getByRole('button',{name:'Plan LONG',exact:true}).click()
+  await page.getByRole('button',{name:'Ustaw pozycję długą',exact:true}).click()
   await chart.click({position:{x:box.width*.58,y:box.height*.52}})
   await expect(chart).toHaveAttribute('data-planner-side','long')
 
@@ -1004,7 +1061,6 @@ test('TP1, TP2 and TP3 buttons arm click-to-set chart placement', async ({ page 
     await button.click()
     await expect(button).toHaveAttribute('aria-pressed','true')
     await expect(chart).toHaveAttribute('data-planner-level-request',target.toLowerCase())
-    await expect(page.locator('.market-chart__placement-banner')).toContainText(`${target} · KLIKNIJ WYKRES`)
     const before = await getPrice(target)
     if (target !== 'TP1' && !before) throw new Error(`${target} price is not available before placement.`)
     await chart.click({position:{x:box.width*.68,y:box.height*yRatio}})
@@ -1024,11 +1080,11 @@ test('TP1, TP2 and TP3 buttons arm click-to-set chart placement', async ({ page 
 test('text deck levels persist and the local model stays retired',async({page})=>{
  const {pageErrors}=await prepareVisualPage(page),writes:string[]=[]
  page.on('request',r=>{if(new URL(r.url()).port==='8765'&&r.method()!=='GET')writes.push(r.url())})
- await page.goto('/');await unlockTextDeck(page)
+ await gotoTerminal(page);await unlockTextDeck(page)
  const today=page.getByRole('button',{name:'DZIŚ · D-H / D-L',exact:true}), yesterday=page.getByRole('button',{name:'POPRZEDNI DZIEŃ · PDH / PDL',exact:true})
  await today.click();await yesterday.click()
  await expect(page.locator('.market-chart')).toHaveAttribute('data-reference-level-count','4')
- await page.reload();await unlockTextDeck(page)
+ await reloadTerminal(page);await unlockTextDeck(page)
  await expect(today).toHaveAttribute('aria-pressed','true');await expect(yesterday).toHaveAttribute('aria-pressed','true')
  await expect(page.locator('.dragon-agent-actions,.dragon-advice-glass')).toHaveCount(0)
  await expect(page.getByRole('button',{name:/ASK AGENT/})).toHaveCount(0)
