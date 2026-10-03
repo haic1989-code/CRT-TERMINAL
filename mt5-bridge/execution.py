@@ -44,8 +44,9 @@ def number(value: Any) -> float:
 
 
 class ExecutionService:
-    def __init__(self, ensure_connected: Callable[[], None]):
+    def __init__(self, ensure_connected: Callable[[], None], market_trade_open: Callable[[str], bool | None] | None = None):
         self.ensure_connected = ensure_connected
+        self.market_trade_open = market_trade_open
 
     @contextmanager
     def journal(self):
@@ -113,6 +114,12 @@ class ExecutionService:
         if current != identity:
             deny("ACCOUNT_CHANGED", "Konto lub terminal się zmienił. Przygotuj plan w nowej sesji.")
         symbol = request["symbol"]
+        if self.market_trade_open is not None:
+            session_open = self.market_trade_open(symbol)
+            if session_open is None:
+                deny("MARKET_SESSION_UNKNOWN", "Nie potwierdziłam godzin sesji symbolu. Uruchom pomocnik CRTMarketSessions w MT5.")
+            if session_open is False:
+                deny("MARKET_CLOSED", "Sesja handlowa symbolu jest zamknięta według grafiku brokera.")
         info = required(mt5.symbol_info(symbol), "SYMBOL_UNAVAILABLE")
         if info.name != symbol or not mt5.symbol_select(symbol, True):
             deny("SYMBOL_MISMATCH", "Nie potwierdziłam dokładnego symbolu brokera.")
@@ -134,7 +141,7 @@ class ExecutionService:
             value = request[field]
             if value <= 0 or not math.isfinite(value) or abs(value / grid - round(value / grid)) > 0.000001:
                 deny("INVALID_PRICE", "Cena, SL albo TP nie pasuje do kroku ceny brokera.")
-        buying = request["type"] in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP)
+        buying = request["type"] in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP, mt5.ORDER_TYPE_BUY_STOP_LIMIT)
         if info.trade_mode not in (mt5.SYMBOL_TRADE_MODE_FULL, mt5.SYMBOL_TRADE_MODE_LONGONLY if buying else mt5.SYMBOL_TRADE_MODE_SHORTONLY):
             deny("SYMBOL_TRADING_DISABLED", "Broker nie pozwala na ten kierunek transakcji.")
         pending = request["action"] == mt5.TRADE_ACTION_PENDING
@@ -214,17 +221,25 @@ class ExecutionService:
         tick = required(mt5.symbol_info_tick(symbol), "QUOTE_UNAVAILABLE")
         side = body.get("side")
         kind = body.get("kind")
-        if side not in ("buy", "sell") or kind not in ("market", "pending"):
-            deny("INVALID_KIND", "Wybierz kupno lub sprzedaż oraz rodzaj zlecenia.", 400)
+        if side not in ("buy", "sell") or kind not in ("market", "buy_limit", "sell_limit"):
+            deny("INVALID_KIND", "Wybierz pozycję rynkową, Buy Limit albo Sell Limit.", 400)
         buying = side == "buy"
+        if kind == "buy_limit" and not buying:
+            deny("LIMIT_SIDE_MISMATCH", "Buy Limit wymaga planu DŁUGA.", 400)
+        if kind == "sell_limit" and buying:
+            deny("LIMIT_SIDE_MISMATCH", "Sell Limit wymaga planu KRÓTKA.", 400)
         price = float(tick.ask if buying else tick.bid) if kind == "market" else number(body.get("entry"))
         deviation = body.get("deviationPoints")
         if type(deviation) is not int or not 0 <= deviation <= 100:
             deny("INVALID_DEVIATION", "Odchylenie ceny musi wynosić od 0 do 100 punktów.", 400)
         if kind == "market" and abs(price - number(body.get("quote"))) > deviation * info.point + info.trade_tick_size * .01:
             deny("QUOTE_MOVED", "Notowanie zmieniło się od odczytu w terminalu. Odśwież podsumowanie.")
-        if kind == "pending":
-            order_type = (mt5.ORDER_TYPE_BUY_LIMIT if price < tick.ask else mt5.ORDER_TYPE_BUY_STOP) if buying else (mt5.ORDER_TYPE_SELL_LIMIT if price > tick.bid else mt5.ORDER_TYPE_SELL_STOP)
+        if kind != "market":
+            if kind == "buy_limit" and price >= tick.ask:
+                deny("LIMIT_PRICE_INVALID", "Buy Limit musi leżeć poniżej bieżącego Ask.")
+            if kind == "sell_limit" and price <= tick.bid:
+                deny("LIMIT_PRICE_INVALID", "Sell Limit musi leżeć powyżej bieżącego Bid.")
+            order_type = mt5.ORDER_TYPE_BUY_LIMIT if kind == "buy_limit" else mt5.ORDER_TYPE_SELL_LIMIT
             filling = mt5.ORDER_FILLING_RETURN
         else:
             order_type = mt5.ORDER_TYPE_BUY if buying else mt5.ORDER_TYPE_SELL
@@ -291,6 +306,11 @@ class ExecutionService:
             if record["state"] != "PREPARED":
                 db.execute("COMMIT")
                 return self.public(record)  # Replay never calls order_send.
+            if record.get("kind") == "pending":
+                record.update(state="REJECTED", message="Stary typ Oczekujące nie jest już wysyłany. Wybierz osobno Buy Limit albo Sell Limit i sprawdź plan ponownie.")
+                self.save(db, record)
+                db.execute("COMMIT")
+                return self.public(record)
             if time.time() * 1000 > record["expiresAt"]:
                 record.update(state="REJECTED", message="Podsumowanie wygasło. Przygotuj nowe, aby sprawdzić aktualną cenę.")
                 self.save(db, record)

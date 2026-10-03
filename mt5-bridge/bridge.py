@@ -22,7 +22,7 @@ HOST = "127.0.0.1"
 PORT = int(os.getenv("CRT_TERMINAL_MT5_PORT", os.getenv("SMARTFLOW_MT5_PORT", "8765")))
 TERMINAL_PATH = os.getenv("MT5_TERMINAL_PATH", "").strip() or None
 PREFERRED_SYMBOL = os.getenv("MT5_SYMBOL", "XAUUSD").strip() or "XAUUSD"
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 BRIDGE_ID = "CRT_TERMINAL_MT5"
 OWNER = os.getenv("CRT_TERMINAL_BRIDGE_OWNER", os.getenv("SMARTFLOW_BRIDGE_OWNER", "manual"))
 _identity: tuple[int, str, str] | None = None
@@ -418,6 +418,83 @@ def _tick_payload(symbol: str) -> dict[str, Any]:
     }
 
 
+def _market_session_payload(symbol: str, account: Any | None = None) -> dict[str, Any]:
+    """Read the live quote/trade schedule written by the bundled MQL5 helper.
+
+    The MetaTrader5 Python package does not expose SymbolInfoSessionQuote/Trade,
+    so absence or stale helper data stays unknown instead of guessing from ticks.
+    """
+    unknown = {"available": False, "quote_open": None, "trade_open": None, "state": "unknown"}
+    terminal = mt5.terminal_info()
+    account = account or mt5.account_info()
+    if terminal is None or account is None:
+        return unknown
+    login = account.get("login") if isinstance(account, dict) else getattr(account, "login", None)
+    server = account.get("server") if isinstance(account, dict) else getattr(account, "server", None)
+    if login is None or server is None:
+        return unknown
+    common_path = str(getattr(terminal, "commondata_path", "") or "").strip()
+    if not common_path:
+        return unknown
+    try:
+        path = Path(common_path) / "Files" / f"CRTMarketSessions_{int(login)}.tsv"
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+        if len(lines) < 2 or lines[-1] != "END":
+            return unknown
+        meta = lines[0].split("\t")
+        if len(meta) != 6 or meta[0] != "CRT1" or int(meta[1]) != int(login) or meta[2] != str(server):
+            return unknown
+        weekday, second_of_day = int(meta[3]), int(meta[4])
+        file_updated_at = path.stat().st_mtime
+        if weekday not in range(7) or second_of_day not in range(86400) or abs(time.time() - file_updated_at) > 12:
+            return unknown
+        sessions: dict[tuple[str, int, str], list[tuple[int, int]]] = {}
+        complete: set[str] = set()
+        for line in lines[1:-1]:
+            fields = line.split("\t")
+            if len(fields) == 2 and fields[0] == "COMPLETE":
+                complete.add(fields[1])
+            elif len(fields) == 6 and fields[0] == "SESSION":
+                _, session_symbol, day_raw, kind, start_raw, end_raw = fields
+                day, start, end = int(day_raw), int(start_raw), int(end_raw)
+                if day not in range(7) or kind not in ("Q", "T") or start not in range(86400) or end not in range(86400):
+                    return unknown
+                sessions.setdefault((session_symbol, day, kind), []).append((start, end))
+        if symbol not in complete:
+            return unknown
+        quote_windows = [window for (name, _, kind), windows in sessions.items() if name == symbol and kind == "Q" for window in windows]
+        trade_windows = [window for (name, _, kind), windows in sessions.items() if name == symbol and kind == "T" for window in windows]
+        if not quote_windows or not trade_windows:
+            return unknown
+
+        def active(kind: str) -> bool:
+            previous_day = (weekday - 1) % 7
+            for (name, day, session_kind), windows in sessions.items():
+                if name != symbol or session_kind != kind or day not in (weekday, previous_day):
+                    continue
+                for start, end in windows:
+                    if start < end and day == weekday and start <= second_of_day < end:
+                        return True
+                    if start > end and ((day == weekday and second_of_day >= start) or (day == previous_day and second_of_day < end)):
+                        return True
+            return False
+
+        quote_open = active("Q")
+        trade_open = active("T")
+        return {
+            "available": True,
+            "quote_open": quote_open,
+            "trade_open": trade_open,
+            "state": "open" if quote_open else "closed",
+            "broker_weekday": weekday,
+            "broker_seconds": second_of_day,
+            "observed_at": int(file_updated_at * 1000),
+            "source": "MT5_SYMBOL_SESSIONS",
+        }
+    except (OSError, ValueError, TypeError, OverflowError):
+        return unknown
+
+
 def _authorize_runtime(request: Request) -> None:
     # CORS alone does not authorize a mutation. Exact Origin + per-process token
     # prevent another website from using the bridge to stop the local service.
@@ -535,6 +612,7 @@ def bars(
             for row in rates
         ]
         values.sort(key=lambda row: row["time"])
+        account_payload = _account_payload()
 
         return {
             "source": "MT5",
@@ -544,7 +622,8 @@ def bars(
             "loaded_bars": len(values),
             "values": values,
             "tick": _tick_payload(symbol),
-            "account": _account_payload(),
+            "account": account_payload,
+            "market_session": _market_session_payload(symbol, account_payload),
             "symbol_info": _symbol_payload(symbol),
         }
 
@@ -677,7 +756,12 @@ def calculate(action: str, symbol: str, side: str, volume: float, price: float, 
         return {"value": float(result), "currency": info.currency, "symbol": resolved}
 
 
-_execution = ExecutionService(_ensure_connected)
+def _market_trade_open(symbol: str) -> bool | None:
+    session = _market_session_payload(symbol)
+    return session["trade_open"] if session["available"] else None
+
+
+_execution = ExecutionService(_ensure_connected, _market_trade_open)
 
 
 def _authorize_execution(request: Request):

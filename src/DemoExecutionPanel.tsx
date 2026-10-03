@@ -3,12 +3,13 @@ import type { MarketFeedState, PlannerSnapshot } from './MarketChart'
 import { executionStatus, prepareExecution, readExecution, sendExecution, unresolvedExecution, type ExecutionRecord, type ExecutionStatus } from './mt5Execution'
 
 const STORAGE = 'crt-terminal:pending-execution:v1'
+const orderTypeLabels: Record<number, string> = { 0: 'BUY MARKET', 1: 'SELL MARKET', 2: 'BUY LIMIT', 3: 'SELL LIMIT', 4: 'BUY STOP', 5: 'SELL STOP', 6: 'BUY STOP LIMIT', 7: 'SELL STOP LIMIT' }
 const stateLabels = { PREPARED: 'Sprawdzone', INTENT: 'Weryfikuję przed wysyłką', SUBMITTING: 'Wysyłam', ACKNOWLEDGED: 'Odpowiedź brokera · uzgadniam', UNKNOWN: 'Wynik niepotwierdzony', REJECTED: 'Odrzucone', RECONCILED: 'Wynik uzgodniony z MT5' }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Nie mogę potwierdzić wyniku. Sprawdźmy go w MT5.'
 type Props = { feed: MarketFeedState; planner: PlannerSnapshot | null; volume: number | null; unsupportedManagement: boolean }
 /** Only explicit user clicks can prepare or submit. Recovery calls are read-only. */
 export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagement }: Props) {
-  const [kind, setKind] = useState<'market' | 'pending'>('pending')
+  const [kind, setKind] = useState<'market' | 'buy_limit' | 'sell_limit'>('market')
   const [deviation, setDeviation] = useState(20)
   const [status, setStatus] = useState<ExecutionStatus | null>(null)
   const [record, setRecord] = useState<ExecutionRecord | null>(null)
@@ -50,7 +51,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     const clock = window.setInterval(() => setNow(Date.now()), 1000)
     return () => { cancelled = true; mounted.current = false; window.clearInterval(timer); window.clearInterval(clock) }
   }, [account?.login, account?.server])
-  const block = !status ? 'Czekam na potwierdzenie uprawnień mostu.' : !status.enabled ? status.reason || 'Najpierw uzgodnię poprzednią wysyłkę z MT5.' : !planner ? 'Wybierz DŁUGA lub KRÓTKA i wskaż wejście na wykresie.' : unsupportedManagement ? 'Ta wersja wysyła pełny TP i SL. Wyłącz TP1–TP3 oraz BE przed wysyłką.' : feed.status !== 'live' ? 'Poczekajmy na aktualne notowanie.' : !volume || volume <= 0 ? 'Ustaw poprawny wolumen.' : ''
+  const block = !status ? 'Czekam na potwierdzenie uprawnień mostu.' : !status.enabled ? status.reason || 'Najpierw uzgodnię poprzednią wysyłkę z MT5.' : !planner ? 'Wybierz DŁUGA lub KRÓTKA i wskaż wejście na wykresie.' : kind === 'buy_limit' && planner.side !== 'long' ? 'Buy Limit wymaga planu DŁUGA.' : kind === 'buy_limit' && feed.ask !== undefined && planner.entry >= feed.ask ? 'Cena Buy Limit musi leżeć poniżej bieżącego Ask.' : kind === 'sell_limit' && planner.side !== 'short' ? 'Sell Limit wymaga planu KRÓTKA.' : kind === 'sell_limit' && feed.bid !== undefined && planner.entry <= feed.bid ? 'Cena Sell Limit musi leżeć powyżej bieżącego Bid.' : !feed.marketSession?.available ? 'Uruchom pomocnik CRTMarketSessions w MT5, aby potwierdzić godziny sesji.' : feed.marketSession.trade_open === false ? 'Sesja handlowa jest zamknięta. Zlecenia DEMO są zablokowane do otwarcia.' : unsupportedManagement ? 'Ta wersja wysyła pełny TP i SL. Wyłącz TP1–TP3 oraz BE przed wysyłką.' : feed.status !== 'live' ? feed.status === 'closed' ? 'Rynek jest zamknięty. Zlecenia DEMO są zablokowane do otwarcia sesji.' : 'Poczekajmy na aktualne notowanie.' : !volume || volume <= 0 ? 'Ustaw poprawny wolumen.' : ''
   const run = async (action: () => Promise<void>) => {
     if (lock.current) return
     lock.current = true; setBusy(true)
@@ -100,11 +101,11 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     <h3>06 EGZEKUCJA · TYLKO DEMO</h3>
     <p className="execution-luna" role="status">Luna › {notice}</p>
     {account && <p className="subline">Konto {account.login} · {account.server}</p>}
-    <div className="execution-options"><label>Rodzaj <select value={kind} disabled={busy || unresolved} onChange={event => setKind(event.target.value as typeof kind)}><option value="pending">Oczekujące · cena planu</option><option value="market">Po rynku · aktualny Bid/Ask</option></select></label><label>Odchylenie (punkty) <input type="number" min="0" max="100" step="1" value={deviation} disabled={busy || unresolved} onChange={event => setDeviation(Math.max(0, Math.min(100, Math.round(Number(event.target.value) || 0))))}/></label></div>
+    <div className="execution-options"><label>Rodzaj <select value={kind} disabled={busy || unresolved} onChange={event => setKind(event.target.value as typeof kind)}><option value="market">Po rynku · Ask / Bid</option><option value="buy_limit" disabled={planner?.side !== 'long'}>Buy Limit · tylko DŁUGA</option><option value="sell_limit" disabled={planner?.side !== 'short'}>Sell Limit · tylko KRÓTKA</option></select></label><label>Odchylenie (punkty) <input type="number" min="0" max="100" step="1" value={deviation} disabled={busy || unresolved} onChange={event => setDeviation(Math.max(0, Math.min(100, Math.round(Number(event.target.value) || 0))))}/></label></div>
     {block && <p className="execution-luna dim">Luna › {block}</p>}
     {!unresolved && <button className="execution-check" disabled={busy || Boolean(block)} onClick={prepare}>Sprawdź zlecenie DEMO</button>}
     {record && <div className="execution-review">
-      <strong>{record.request.symbol} · {record.request.type % 2 === 0 ? 'KUPNO' : 'SPRZEDAŻ'} · {record.kind === 'market' ? 'PO RYNKU' : [,, 'LIMIT','LIMIT','STOP','STOP'][record.request.type] || 'OCZEKUJĄCE'}</strong>
+      <strong>{record.request.symbol} · {orderTypeLabels[record.request.type] || 'ZLECENIE'}</strong>
       <dl>{[['Lot', record.request.volume], ['Wejście', record.request.price], ['SL', record.request.sl], ['Pełny TP', record.request.tp], ['Ryzyko', `${record.risk.loss.toFixed(2)} ${record.risk.currency} (${record.risk.riskPercent.toFixed(2)}%)`], ['Margin', `${record.risk.margin.toFixed(2)} ${record.risk.currency}`], ['Stan', stateLabels[record.state]]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
       {record.result && <p className="subline">{record.result.order ? `Zlecenie #${record.result.order} · ` : ''}{record.result.deal ? `Transakcja #${record.result.deal} · ` : ''}{record.result.filledVolume !== undefined ? `Wykonano ${record.result.filledVolume} lota` : ''}</p>}
       {prepared && <><p className="execution-luna">Luna › {preparedKey.current !== planKey ? 'Plan się zmienił. Sprawdź go ponownie.' : seconds > 0 ? `Podsumowanie jest ważne jeszcze ${seconds} s. Sprawdź kierunek, SL i TP.` : 'Podsumowanie wygasło. Sprawdź plan ponownie.'}</p><button className="execution-send" disabled={busy || Boolean(block) || preparedKey.current !== planKey || seconds === 0} onClick={send}>Wyślij {record.request.volume} lota · DEMO</button></>}

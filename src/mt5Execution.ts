@@ -2,7 +2,7 @@ import { bridgeFetch, resolveBridgeEndpoint } from './bridgeEndpoint'
 
 export type ExecutionState = 'PREPARED' | 'INTENT' | 'SUBMITTING' | 'ACKNOWLEDGED' | 'UNKNOWN' | 'REJECTED' | 'RECONCILED'
 export type ExecutionRecord = {
-  clientRequestId: string; state: ExecutionState; confirmationToken: string; expiresAt: number; kind: 'market' | 'pending'
+  clientRequestId: string; state: ExecutionState; confirmationToken: string; expiresAt: number; kind: 'market' | 'buy_limit' | 'sell_limit' | 'pending'
   account: { login: number; server: string; terminal: string }
   request: { symbol: string; volume: number; type: number; price: number; sl: number; tp: number; deviation: number }
   risk: { loss: number; riskPercent: number; margin: number; currency: string }
@@ -11,7 +11,7 @@ export type ExecutionRecord = {
 export type ExecutionStatus = { mode: 'DEMO_ONLY'; enabled: boolean; reason?: string; account: ExecutionRecord['account']; unresolved: Array<{ clientRequestId: string; state: ExecutionState }> }
 export type ExecutionPlan = {
   clientRequestId: string; accountLogin: number; accountServer: string; symbol: string; side: 'buy' | 'sell'
-  kind: 'market' | 'pending'; volume: number; entry: number; sl: number; tp: number; quote: number; deviationPoints: number
+  kind: 'market' | 'buy_limit' | 'sell_limit'; volume: number; entry: number; sl: number; tp: number; quote: number; deviationPoints: number
 }
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const endpoint = await resolveBridgeEndpoint()
@@ -31,7 +31,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     ? data?.mode === 'DEMO_ONLY' && typeof data.enabled === 'boolean' && accountValid && Array.isArray(data.unresolved) && data.unresolved.every((item: { clientRequestId?: unknown }) => typeof item.clientRequestId === 'string')
     : accountValid && typeof data.clientRequestId === 'string' && typeof data.confirmationToken === 'string' && finite(data.expiresAt)
       && ['PREPARED', 'INTENT', 'SUBMITTING', 'ACKNOWLEDGED', 'UNKNOWN', 'REJECTED', 'RECONCILED'].includes(data.state)
-      && ['market', 'pending'].includes(data.kind) && typeof data.message === 'string' && typeof data.request?.symbol === 'string'
+      && ['market', 'buy_limit', 'sell_limit', 'pending'].includes(data.kind) && typeof data.message === 'string' && typeof data.request?.symbol === 'string'
       && ['volume', 'type', 'price', 'sl', 'tp', 'deviation'].every(field => finite(data.request?.[field]))
       && ['loss', 'riskPercent', 'margin'].every(field => finite(data.risk?.[field])) && typeof data.risk?.currency === 'string'
   if (!valid) throw new Error('Odpowiedź mostu jest niekompletna. Nie potwierdzam wysyłki; sprawdźmy dziennik MT5.')

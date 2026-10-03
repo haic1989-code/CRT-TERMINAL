@@ -85,7 +85,19 @@ export type Mt5BarsResponse = {
   values: Mt5Bar[]
   tick: Mt5Tick
   account: Mt5Account
+  market_session: Mt5MarketSession
   symbol_info: Mt5SymbolInfo
+}
+
+export type Mt5MarketSession = {
+  available: boolean
+  quote_open: boolean | null
+  trade_open: boolean | null
+  state: 'open' | 'closed' | 'unknown'
+  broker_weekday?: number
+  broker_seconds?: number
+  observed_at?: number
+  source?: 'MT5_SYMBOL_SESSIONS'
 }
 
 export type Mt5Position = { ticket: number; symbol: string; type: 'buy' | 'sell'; volume: number; price_open: number; sl: number; tp: number; profit: number; swap: number; commission: number; time: number }
@@ -164,6 +176,15 @@ function validateResponse(path: string, payload: unknown): void {
       || typeof payload.account.server !== 'string' || typeof payload.account.currency !== 'string'
       || !numbers(payload.symbol_info, ['point', 'trade_tick_size', 'volume_step', 'volume_min', 'volume_max', 'chart_mode'])) return fail()
     if (![0, 1].includes(Number(payload.symbol_info.chart_mode))) return fail()
+    if (endpoint === '/v1/bars') {
+      const session = payload.market_session
+      if (!object(session) || typeof session.available !== 'boolean'
+        || !['open', 'closed', 'unknown'].includes(String(session.state))
+        || ![true, false, null].includes(session.quote_open as boolean | null)
+        || ![true, false, null].includes(session.trade_open as boolean | null)
+        || (session.available && (session.state === 'unknown' || !numbers(session, ['broker_weekday', 'broker_seconds', 'observed_at']) || session.source !== 'MT5_SYMBOL_SESSIONS'))
+        || (!session.available && (session.state !== 'unknown' || session.quote_open !== null || session.trade_open !== null))) return fail()
+    }
     const chartPrice = payload.symbol_info.chart_mode === 1 ? payload.tick.last : payload.tick.bid
     if (!(Number(chartPrice) > 0)) return fail()
     if (endpoint === '/v1/bars') {

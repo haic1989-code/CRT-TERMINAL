@@ -3,7 +3,7 @@
 Adapter danych MT5 oraz ręczna egzekucja DEMO dla własnej sesji desktopowej CRT Terminal.
 
 Od 0.1.7 aplikacja desktopowa uruchamia własny most na porcie nadanym przez
-system. Od 0.1.14 sprawdza protokół 3, instancję i właściciela sesji. Ręczne uruchomienie
+system. Od 0.1.22 sprawdza protokół 5, instancję i właściciela sesji. Ręczne uruchomienie
 opisane poniżej nadal używa portu 8765 i służy podglądowi przeglądarkowemu.
 Zmiana konta lub instalacji MT5 wymaga restartu aplikacji. Diagnostyka startu
 i log mostu są zapisywane osobno dla każdej sesji w lokalnym katalogu danych
@@ -21,6 +21,7 @@ CRT Terminal. Błędy odczytu portfela nie są traktowane jak brak pozycji.
 - pozycje, pending orders, metadane instrumentu i świeżość ticka,
 - dzienny P/L, siłę walut i bary kontekstu MTF,
 - brokerowe wyliczenie margin/profit (bez złożenia zlecenia),
+- godziny sesji kwotowań i handlu dla symbolu z natywnego API MQL5,
 - do 100000 barów na żądanie, ograniczone historią dostępną w terminalu MT5.
 
 Ręcznie uruchomiony bridge ma wyłączoną egzekucję. Własna sesja desktopowa
@@ -57,6 +58,37 @@ innych polityk filling. Zasady i ograniczenia opisano w głównym README.
    `http://127.0.0.1:8765/v1/health`
 
 Powinien pojawić się JSON z `"ok": true`.
+
+## Godziny sesji symbolu
+
+Godziny sesji odczytuje dołączony, tylko odczytowy Expert Advisor
+`CRTMarketSessions.mq5`. Korzysta z `SymbolInfoSessionQuote` i
+`SymbolInfoSessionTrade`, zapisuje aktualny czas serwera oraz tygodniowe sesje
+do pliku w katalogu Common\Files. Nie wysyła zleceń ani nie zmienia ustawień
+handlu.
+
+Jednorazowe uruchomienie:
+
+1. W MetaTrader 5 wybierz **Plik → Otwórz folder danych**.
+2. Skopiuj `CRTMarketSessions.mq5` do `MQL5\Experts`.
+3. Otwórz ten plik w MetaEditor i skompiluj go klawiszem F7.
+4. W MT5 odśwież Nawigator i przeciągnij **CRTMarketSessions** na wykres.
+   Nie musisz włączać Algo Trading dla tego pomocnika; tylko odczytuje grafik
+   i nigdy nie składa transakcji.
+5. Pozostaw wykres z uruchomionym EA. Most odczytuje aktualizowany plik sesji
+   z `Common\Files` i dopasowuje go do symbolu oraz konta.
+
+Bez świeżego, kompletnego pliku sesji terminal pokaże brak grafiku i nie będzie
+zgadywał statusu rynku na podstawie starego ticka. Po wykryciu zamkniętej sesji
+blokuje przygotowanie nowej egzekucji.
+
+## Rodzaje zleceń
+
+Terminal udostępnia trzy jawne wybory: **Po rynku**, **Buy Limit** i
+**Sell Limit**. Buy Limit jest przyjmowany tylko dla planu DŁUGA i ceny poniżej
+Ask; Sell Limit tylko dla KRÓTKA i ceny powyżej Bid. Most nie zamienia już
+automatycznie nieprawidłowej ceny Limit na zlecenie Stop. Zachowano kontrolę
+DEMO, `order_check`, dziennik idempotencji i osobne potwierdzenie wysyłki.
 
 ## Broker używa innej nazwy złota
 

@@ -43,7 +43,7 @@ fn read_bridge_endpoint(app: tauri::AppHandle) -> Result<serde_json::Value, Stri
         .map_err(|_| "Most MT5 jeszcze się uruchamia.".to_string())?;
     let endpoint: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     if endpoint["owner"].as_str() != Some(bootstrap.owner.as_str())
-        || endpoint["protocol_version"].as_u64() != Some(4)
+        || endpoint["protocol_version"].as_u64() != Some(5)
     {
         return Err("Niezgodna sesja lub wersja mostu MT5.".to_string());
     }

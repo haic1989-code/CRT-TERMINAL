@@ -13,7 +13,7 @@ import {
   type Logical,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import { fetchMt5Bars, type Mt5Account, type Mt5SymbolInfo } from './mt5Client'
+import { fetchMt5Bars, type Mt5Account, type Mt5MarketSession, type Mt5SymbolInfo } from './mt5Client'
 import { vwapPresentation } from './indicators/vwapPresentation'
 import { drawingLogicalAtTime, drawingTimeAtLogical, fibonacciRetracementPrice } from './domain/drawingGeometry'
 import { PositionPlannerPrimitive, plannerLogicalToCoordinate, type PlannerPrimitiveHit } from './positionPlannerPrimitive'
@@ -49,6 +49,7 @@ export type MarketFeedState = {
   lastPrice?: number
   bid?: number
   ask?: number
+  marketSession?: Mt5MarketSession
 }
 
 const TIMEFRAME_MINUTES: Record<ChartTimeframe, number> = {
@@ -385,6 +386,11 @@ function feedLabel(feed: MarketFeedState) {
   if (feed.status === 'stale') return 'MT5 · NIEAKTUALNY'
   if (feed.status === 'error') return 'MT5 · NIEDOSTĘPNY'
   return 'MT5 · ŁĄCZENIE'
+}
+
+function feedStatusForQuote(quoteAgeMs: number, session: Mt5MarketSession): MarketFeedStatus {
+  if (session.available && session.quote_open === false) return 'closed'
+  return quoteAgeMs <= 15000 ? 'live' : quoteAgeMs <= 120000 ? 'history' : 'stale'
 }
 
 export function MarketChart({
@@ -757,8 +763,7 @@ export function MarketChart({
         const newest = candles[candles.length - 1]
         const tickTimeMs = payload.tick.time_msc || payload.tick.time * 1000
         const quoteAgeMs = Math.max(0, Date.now() - tickTimeMs)
-        const status: MarketFeedStatus =
-          quoteAgeMs <= 15000 ? 'live' : quoteAgeMs <= 120000 ? 'history' : 'stale'
+        const status = feedStatusForQuote(quoteAgeMs, payload.market_session)
 
         liveHistoryRef.current = candles
         setData(candles)
@@ -774,13 +779,17 @@ export function MarketChart({
           symbol: payload.symbol,
           account: payload.account,
           symbolInfo: payload.symbol_info,
+          marketSession: payload.market_session,
           lastPrice: payload.symbol_info.chart_mode === 1 ? payload.tick.last : payload.tick.bid,
           bid: payload.tick.bid,
           ask: payload.tick.ask,
-          message:
-            status === 'stale'
-                ? 'MT5 połączony, ale ostatni tick jest nieaktualny.'
-                : undefined,
+          message: status === 'closed'
+            ? 'Rynek jest zamknięty według godzin sesji symbolu u brokera.'
+            : status === 'stale'
+              ? payload.market_session.available
+                ? 'Sesja jest otwarta, ale ostatni tick jest nieaktualny.'
+                : 'Nie mam grafiku sesji brokera. Ostatni tick jest nieaktualny.'
+              : undefined,
         })
       } catch (error) {
         if (cancelled || controller.signal.aborted) return
@@ -1231,8 +1240,7 @@ export function MarketChart({
         const tick = payload.tick
         const tickTimeMs = tick.time_msc || tick.time * 1000
         const quoteAgeMs = Math.max(0, Date.now() - tickTimeMs)
-        const status: MarketFeedStatus =
-          quoteAgeMs <= 15000 ? 'live' : quoteAgeMs <= 120000 ? 'history' : 'stale'
+        const status = feedStatusForQuote(quoteAgeMs, payload.market_session)
 
         // Native MT5 bars are authoritative, including current-bar extrema.
         const merged = new Map(liveHistoryRef.current.map(bar => [Number(bar.time), bar]))
@@ -1264,13 +1272,17 @@ export function MarketChart({
           symbol: payload.symbol,
           account: payload.account,
           symbolInfo: payload.symbol_info,
+          marketSession: payload.market_session,
           lastPrice: payload.symbol_info.chart_mode === 1 ? tick.last : tick.bid,
           bid: tick.bid,
           ask: tick.ask,
-          message:
-            status === 'stale'
-                ? 'MT5 połączony, ale strumień ticków jest nieaktualny.'
-                : undefined,
+          message: status === 'closed'
+            ? 'Rynek jest zamknięty według godzin sesji symbolu u brokera.'
+            : status === 'stale'
+              ? payload.market_session.available
+                ? 'Sesja jest otwarta, ale strumień ticków jest nieaktualny.'
+                : 'Nie mam grafiku sesji brokera. Strumień ticków jest nieaktualny.'
+              : undefined,
         })
       } catch (error) {
         recovering = true
