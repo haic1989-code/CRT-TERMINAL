@@ -31,7 +31,7 @@ function Write-BridgeStartupStatus([string]$State, [string]$Message) {
 }
 
 try {
-    Write-BridgeStartupStatus 'starting' 'PowerShell opened start.ps1.'
+    Write-BridgeStartupStatus 'starting' 'Uruchamiam lokalne środowisko mostu MT5.'
     # Use .NET path operations below: hidden GUI-launched PowerShell can have
     # no active FileSystem drive for PowerShell's Join-Path provider.
     # The Windows `py.exe` launcher can exist even when it has no registered
@@ -88,7 +88,7 @@ try {
     }
 
     if (-not [System.IO.File]::Exists($venvPython) -or $venvVersion -ne '3 13 True') {
-        Write-BridgeStartupStatus 'starting' 'Przygotowuje lokalne srodowisko Python 3.13.'
+        Write-BridgeStartupStatus 'starting' 'Przygotowuję lokalne środowisko Python 3.13.'
         Write-Host 'Tworze srodowisko Python .venv...' -ForegroundColor Yellow
         & $pythonSource @pythonArgs -m venv --clear $venvDirectory
         $venvExitCode = $LASTEXITCODE
@@ -97,7 +97,7 @@ try {
         }
     }
 
-    Write-BridgeStartupStatus 'starting' 'Weryfikuje przypiete pakiety z lokalnego zestawu, bez dostepu do sieci.'
+    Write-BridgeStartupStatus 'starting' 'Sprawdzam pakiety z lokalnego zestawu offline.'
     Write-Host 'Weryfikuje lokalne pakiety MT5 Bridge...' -ForegroundColor Yellow
     $ErrorActionPreference = 'Continue'
     $pipOutput = & $venvPython -m pip install --disable-pip-version-check --no-input --no-index --find-links $wheelhouseDirectory -r $requirementsFile 2>&1
@@ -124,7 +124,7 @@ try {
     Write-Host 'Aplikacja odczyta adres prywatnej sesji mostu.' -ForegroundColor Green
     Write-Host ''
 
-    Write-BridgeStartupStatus 'starting' 'Uruchamiam bridge Python i health endpoint.'
+    Write-BridgeStartupStatus 'starting' 'Uruchamiam most i sprawdzam połączenie z MT5.'
     if ($env:SMARTFLOW_BRIDGE_ENDPOINT_FILE) {
         $bridgeLog = [System.IO.Path]::ChangeExtension($env:SMARTFLOW_BRIDGE_ENDPOINT_FILE, '.log')
         # Log native stderr without PowerShell treating normal uvicorn logs as errors.
@@ -141,7 +141,7 @@ try {
         $bridgeDetails = if ($bridgeLog -and [System.IO.File]::Exists($bridgeLog)) { (Get-Content -LiteralPath $bridgeLog -Tail 8) -join ' | ' } else { '' }
         throw ('Proces bridge zakonczyl sie nieoczekiwanie (kod ' + $bridgeExitCode + '). ' + $bridgeDetails)
     }
-    Write-BridgeStartupStatus 'stopped' 'Most i polaczenie MT5 zostaly zamkniete.'
+    Write-BridgeStartupStatus 'stopped' 'Zamknęłam most i połączenie z MT5.'
     Write-Host 'BYE ADMIN! Bridge zatrzymany.' -ForegroundColor Green
 } catch {
     $line = $_.InvocationInfo.ScriptLineNumber

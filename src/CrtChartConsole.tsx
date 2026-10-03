@@ -20,7 +20,7 @@ function TypedLine({text, sequence = 0, paused}: {text:string; sequence?:number;
     media.addEventListener('change', start)
     return () => {clearInterval(timer); media.removeEventListener('change', start)}
   }, [text, sequence, paused])
-  return <p className="crt-console-line"><span className="crt-console-readable">{text}</span><span aria-hidden="true">&gt; {visible}<i className="crt-console-cursor">▌</i></span></p>
+  return <p className="crt-console-line"><span className="crt-console-readable">{text}</span><span aria-hidden="true">Luna › {visible}<i className="crt-console-cursor">▌</i></span></p>
 }
 
 type Props = {
@@ -37,7 +37,7 @@ export function CrtChartConsole({notice, motionPaused, periodPrompt = null, onPe
   const [value,setValue] = useState('')
   const [error,setError] = useState('')
   const input = useRef<HTMLInputElement>(null)
-  const promptText = 'Jaki okres średniej adminie? :)'
+  const promptText = 'Luna › Jaki okres średniej mam ustawić, admin? :)'
   useEffect(() => {
     if (!periodPrompt) { setQuestion(''); setValue(''); setError(''); return }
     setQuestion(''); setValue(''); setError('')
@@ -57,7 +57,7 @@ export function CrtChartConsole({notice, motionPaused, periodPrompt = null, onPe
     if (!periodPrompt || question !== promptText || !onPeriodSubmit) return
     const period = Number(value.trim())
     if (!/^[0-9]{1,3}$/.test(value.trim()) || !Number.isInteger(period) || period < 2 || period > 200) {
-      setError('Wpisz liczbę całkowitą od 2 do 200.')
+      setError('Podaj mi liczbę całkowitą od 2 do 200.')
       input.current?.focus({preventScroll:true})
       return
     }

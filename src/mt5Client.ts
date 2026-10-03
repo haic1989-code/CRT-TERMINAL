@@ -20,6 +20,7 @@ export type Mt5Account = {
   trade_allowed: boolean
   trade_expert: boolean
   margin_mode: number
+  trade_mode?: number
   day_pnl?: number
   daily_win_rate?: number | null
   observed_at?: number

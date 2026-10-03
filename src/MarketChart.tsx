@@ -1966,21 +1966,21 @@ export function MarketChart({
         })}
       </svg>
 
-      {drawingRequest && <div className="market-chart__drawing-hint" role="status">{drawingRequest.tool.toUpperCase()} · {drawingKind && DRAWING_POINT_COUNTS[drawingKind] > 1 ? `${drawingAnchors.length + 1}/${DRAWING_POINT_COUNTS[drawingKind]} · kliknij punkt${DRAWING_POINT_COUNTS[drawingKind] === 2 ? ' lub przeciągnij' : ''}` : 'kliknij wykres'} · ESC anuluj</div>}
-      {planner && !drawingRequest && <div className="planner-gesture-guide">&gt; PLAN {plannerSide === 'long' ? 'DŁUGA' : plannerSide === 'short' ? 'KRÓTKA' : ''} · wnętrze: przesuń całość · WEJŚCIE / TP / SL: zmień cenę · uchwyty: szerokość{(movingPlanner || resizingPlanner || activePlannerLevel) && ' · ESC cofnij ruch'}</div>}
+      {drawingRequest && <div className="market-chart__drawing-hint" role="status">Luna › {drawingRequest.tool.toUpperCase()} · {drawingKind && DRAWING_POINT_COUNTS[drawingKind] > 1 ? `${drawingAnchors.length + 1}/${DRAWING_POINT_COUNTS[drawingKind]} · kliknij punkt${DRAWING_POINT_COUNTS[drawingKind] === 2 ? ' lub przeciągnij' : ''}` : 'kliknij wykres'} · ESC anuluj</div>}
+      {!compactFeedStatus && planner && !drawingRequest && <div className="planner-gesture-guide">&gt; PLAN {plannerSide === 'long' ? 'DŁUGA' : plannerSide === 'short' ? 'KRÓTKA' : ''} · wnętrze: przesuń całość · WEJŚCIE / TP / SL: zmień cenę · uchwyty: szerokość{(movingPlanner || resizingPlanner || activePlannerLevel) && ' · ESC cofnij ruch'}</div>}
       {chartAnnotations.length > 0 && <div className="chart-drawing-manager" data-planner-ui="true">
         <button className="chart-drawing-toggle" aria-label="Zarządzaj rysunkami" aria-expanded={drawingsOpen} onClick={() => { setDrawingsOpen(v => !v); setConfirmClearDrawings(false) }}>&gt; RYSUNKI [{chartAnnotations.length}]</button>
         {drawingsOpen && <div className="chart-drawing-list" aria-label="Lista rysunków">
           <header>{symbol} / {timeframe}<button aria-label="Zamknij listę rysunków" onClick={() => setDrawingsOpen(false)}>×</button></header>
-          {chartAnnotations.length === 0 && <p>Brak rysunków na tym wykresie.</p>}
+          {chartAnnotations.length === 0 && <p>Luna › Nie masz jeszcze rysunków na tym wykresie.</p>}
           {chartAnnotations.map((item, index) => <div key={item.id}>
             <button aria-pressed={selectedDrawing === item.id} onClick={() => setSelectedDrawing(item.id)}>{String(index + 1).padStart(2,'0')} / {item.kind === 'trend' ? 'TRENDLINE' : item.kind.toUpperCase()}</button>
             <button aria-label={'Usuń rysunek ' + (index + 1)} onClick={() => deleteDrawing(item.id)}>USUŃ</button>
           </div>)}
-          {chartAnnotations.length > 0 && <footer>{confirmClearDrawings ? <><span>Usunąć wszystkie z {timeframe}?</span><button onClick={() => { setChartAnnotations([]); setSelectedDrawing(null); setConfirmClearDrawings(false) }}>Tak, wyczyść</button><button onClick={() => setConfirmClearDrawings(false)}>Anuluj</button></> : <button onClick={() => setConfirmClearDrawings(true)}>Wyczyść wszystkie rysunki</button>}</footer>}
+          {chartAnnotations.length > 0 && <footer>{confirmClearDrawings ? <><span>Luna › Usunąć wszystkie rysunki z {timeframe}?</span><button onClick={() => { setChartAnnotations([]); setSelectedDrawing(null); setConfirmClearDrawings(false) }}>Tak, wyczyść</button><button onClick={() => setConfirmClearDrawings(false)}>Anuluj</button></> : <button onClick={() => setConfirmClearDrawings(true)}>Wyczyść wszystkie rysunki</button>}</footer>}
         </div>}
       </div>}
-      <PlannerControlPanel
+      {!compactFeedStatus && <PlannerControlPanel
         side={plannerSide}
         placingSide={placingSide}
         planner={planner}
@@ -1991,7 +1991,7 @@ export function MarketChart({
         onLotsChange={(lots) => { setPlannerLots(lots); setPlannerDirty(true) }}
         onArm={armPlanner}
         onClear={clearPlanner}
-      />
+      />}
 
       {!navigationControlsExternal && <div className="chart-navigation-controls" data-planner-ui="true" aria-label="Sterowanie pozycją wykresu">
         <button
@@ -2043,12 +2043,12 @@ export function MarketChart({
       </div>}
 
       {feed.status === 'connecting' && data.length === 0 && (
-        <div className="market-chart__loading">ŁĄCZENIE Z LOKALNYM META TRADER 5…</div>
+        <div className="market-chart__loading">Luna › Łączę się z Twoim MetaTrader 5…</div>
       )}
 
       {feed.status === 'error' && data.length === 0 && (
         <div className="market-chart__loading market-chart__loading--error">
-          MT5 OFFLINE · {feed.message || 'Nie udało się połączyć z MT5'}
+          Luna › Nie mam połączenia z MT5. {feed.message || 'Nie udało się połączyć z MT5'}
         </div>
       )}
 
@@ -2062,12 +2062,12 @@ export function MarketChart({
           PENDING #{managedOrder.id} · TRIGGER {formatSymbolPrice(managedOrder.trigger, feed.symbolInfo)}
         </div>
       )}
-      {placingTarget && (
+      {!compactFeedStatus && placingTarget && (
         <div className="market-chart__placement-banner" role="status">
           {placingTarget.toUpperCase()} · KLIKNIJ WYKRES, ABY USTAWIĆ CENĘ
         </div>
       )}
-      {placingSide && (
+      {!compactFeedStatus && placingSide && (
         <div className="market-chart__placement-banner">
           {placingSide === 'long' ? 'LONG' : 'SHORT'} · KLIKNIJ PUNKT WEJŚCIA
         </div>

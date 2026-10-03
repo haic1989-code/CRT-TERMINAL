@@ -1,9 +1,9 @@
 # CRT Terminal — most lokalny MT5
 
-Adapter tylko do odczytu między lokalnym MetaTrader 5 a CRT Terminal.
+Adapter danych MT5 oraz ręczna egzekucja DEMO dla własnej sesji desktopowej CRT Terminal.
 
 Od 0.1.7 aplikacja desktopowa uruchamia własny most na porcie nadanym przez
-system. Sprawdza protokół 2, instancję i właściciela sesji. Ręczne uruchomienie
+system. Od 0.1.14 sprawdza protokół 3, instancję i właściciela sesji. Ręczne uruchomienie
 opisane poniżej nadal używa portu 8765 i służy podglądowi przeglądarkowemu.
 Zmiana konta lub instalacji MT5 wymaga restartu aplikacji. Diagnostyka startu
 i log mostu są zapisywane osobno dla każdej sesji w lokalnym katalogu danych
@@ -23,7 +23,14 @@ CRT Terminal. Błędy odczytu portfela nie są traktowane jak brak pozycji.
 - brokerowe wyliczenie margin/profit (bez złożenia zlecenia),
 - do 100000 barów na żądanie, ograniczone historią dostępną w terminalu MT5.
 
-Bridge **nie posiada endpointu składania zleceń**.
+Ręcznie uruchomiony bridge ma wyłączoną egzekucję. Własna sesja desktopowa
+udostępnia `/v1/execution/status`, `/prepare`, `/execute` i `/requests/{id}`
+(każda ścieżka z prefiksem `/v1/execution`). Wymagane są dokładny origin
+`http://tauri.localhost`, prywatny token sesji i konto DEMO. Token pochodzi z
+pliku endpointu odczytywanego przez natywną aplikację; nie jest zwracany przez
+HTTP. `order_check` oraz `order_send` dostają ten sam, wcześniej pokazany
+użytkownikowi słownik zlecenia. Nie ma automatycznych ponowień ani próbowania
+innych polityk filling. Zasady i ograniczenia opisano w głównym README.
 
 ## Odczyty v1
 

@@ -16,12 +16,13 @@ import MetaTrader5 as mt5
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from execution import ExecutionService
 
 HOST = "127.0.0.1"
 PORT = int(os.getenv("SMARTFLOW_MT5_PORT", "8765"))
 TERMINAL_PATH = os.getenv("MT5_TERMINAL_PATH", "").strip() or None
 PREFERRED_SYMBOL = os.getenv("MT5_SYMBOL", "XAUUSD").strip() or "XAUUSD"
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 BRIDGE_ID = "SMARTFLOW_X_MT5"
 OWNER = os.getenv("SMARTFLOW_BRIDGE_OWNER", "manual")
 _identity: tuple[int, str, str] | None = None
@@ -102,6 +103,7 @@ _resolved_symbol: str | None = None
 _closing = threading.Event()
 _shutdown_token = secrets.token_urlsafe(32)
 _instance = secrets.token_hex(16)
+_execution_token = secrets.token_urlsafe(32) if OWNER != "manual" else ""
 _server: Any = None
 
 app = FastAPI(
@@ -131,7 +133,7 @@ async def local_network_headers(request: Request, call_next):
     )
     if origin in ALLOWED_ORIGINS and private_network_preflight:
         response.headers["Access-Control-Allow-Private-Network"] = "true"
-    response.headers["X-SmartFlow-MT5"] = "read-only"
+    response.headers["X-SmartFlow-MT5"] = "demo-manual" if _execution_token else "read-only"
     response.headers["X-CRT-Protocol"] = str(PROTOCOL_VERSION)
     response.headers["X-CRT-Instance"] = _instance
     response.headers["Cache-Control"] = "no-store"
@@ -351,6 +353,7 @@ def _account_payload() -> dict[str, Any]:
         "trade_allowed": bool(info.trade_allowed),
         "trade_expert": bool(info.trade_expert),
         "margin_mode": int(info.margin_mode),
+        "trade_mode": int(info.trade_mode),
         "day_pnl": float(day_pnl + info.profit),
         "daily_win_rate": _daily_win_rate(deals, open_position_ids),
         "observed_at": int(now.timestamp() * 1000),
@@ -452,7 +455,8 @@ def health():
         symbol = PREFERRED_SYMBOL
         return {
             "ok": True,
-            "read_only": True,
+            "read_only": not bool(_execution_token),
+            "execution_mode": "DEMO_ONLY" if _execution_token else "DISABLED",
             "bridge": "SMARTFLOW_X_MT5",
             "protocol_version": PROTOCOL_VERSION,
             "instance": _instance,
@@ -672,11 +676,49 @@ def calculate(action: str, symbol: str, side: str, volume: float, price: float, 
         return {"value": float(result), "currency": info.currency, "symbol": resolved}
 
 
+_execution = ExecutionService(_ensure_connected)
+
+
+def _authorize_execution(request: Request):
+    if _closing.is_set() or not _execution_token or request.headers.get("origin") != "http://tauri.localhost":
+        raise HTTPException(status_code=403, detail={"error": "EXECUTION_DESKTOP_ONLY", "hint": "Wysyłam zlecenia tylko z aplikacji desktop na koncie DEMO."})
+    if request.headers.get("x-crt-instance") != _instance or not secrets.compare_digest(request.headers.get("x-crt-execution", ""), _execution_token):
+        raise HTTPException(status_code=403, detail={"error": "EXECUTION_TOKEN_INVALID", "hint": "Nie potwierdziłam własnej sesji mostu. Uruchom ponownie terminal."})
+
+
+@app.get("/v1/execution/status")
+def execution_status(request: Request):
+    _authorize_execution(request)
+    with _lock:
+        return _execution.status()
+
+
+@app.post("/v1/execution/prepare")
+def execution_prepare(request: Request, body: dict[str, Any]):
+    _authorize_execution(request)
+    with _lock:
+        return _execution.prepare(body)
+
+
+@app.post("/v1/execution/execute")
+def execution_execute(request: Request, body: dict[str, Any]):
+    _authorize_execution(request)
+    with _lock:
+        return _execution.execute(body)
+
+
+@app.get("/v1/execution/requests/{request_id}")
+def execution_read(request: Request, request_id: str):
+    _authorize_execution(request)
+    with _lock:
+        return _execution.read(request_id)
+
+
 if __name__ == "__main__":
     import uvicorn
 
     print(f"CRT Terminal MT5 Local Bridge -> http://{HOST}:{PORT}")
-    print("READ ONLY: no order_send endpoint is exposed.")
+    print("Manual DEMO execution available only to the owning desktop session." if _execution_token else "READ ONLY: execution disabled.")
     # Binding port 0 lets Windows allocate a private endpoint for each desktop
     # session. The inherited endpoint file ties discovery to that exact owner.
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -687,7 +729,7 @@ if __name__ == "__main__":
     if endpoint_file:
         path = Path(endpoint_file)
         temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"url": f"http://{HOST}:{actual_port}", "instance": _instance, "owner": OWNER, "protocol_version": PROTOCOL_VERSION}), encoding="utf-8")
+        temporary.write_text(json.dumps({"url": f"http://{HOST}:{actual_port}", "instance": _instance, "owner": OWNER, "protocol_version": PROTOCOL_VERSION, "execution_token": _execution_token}), encoding="utf-8")
         temporary.replace(path)
     _server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=actual_port, log_level="info", timeout_graceful_shutdown=5))
     try:

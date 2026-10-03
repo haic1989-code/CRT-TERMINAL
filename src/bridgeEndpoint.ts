@@ -1,6 +1,6 @@
-export const BRIDGE_PROTOCOL_VERSION = 2
+export const BRIDGE_PROTOCOL_VERSION = 3
 export const BRIDGE_ID = 'SMARTFLOW_X_MT5'
-type Endpoint = { url: string; instance: string; owner: string; protocol_version: number }
+type Endpoint = { url: string; instance: string; owner: string; protocol_version: number; execution_token?: string }
 let endpoint: Endpoint | undefined
 
 export async function resolveBridgeEndpoint(): Promise<Endpoint> {
@@ -11,7 +11,7 @@ export async function resolveBridgeEndpoint(): Promise<Endpoint> {
   if (endpoint) return endpoint
   const value = await invoke<Endpoint>('read_bridge_endpoint')
   if (value.protocol_version !== BRIDGE_PROTOCOL_VERSION || !value.owner || !value.instance || !/^http:\/\/127\.0\.0\.1:\d+$/.test(value.url)) {
-    throw new Error('Niezgodny endpoint mostu MT5.')
+    throw new Error('Nie rozpoznałam własnego mostu MT5.')
   }
   endpoint = value
   return value
@@ -26,7 +26,7 @@ export async function bridgeFetch(path: string, init: RequestInit = {}): Promise
   } as RequestInit)
   if (response.headers.get('X-CRT-Protocol') !== String(BRIDGE_PROTOCOL_VERSION)
     || (endpoint.instance && response.headers.get('X-CRT-Instance') !== endpoint.instance)) {
-    throw new Error('Nieprawidłowa wersja lub sesja mostu MT5. Uruchom aktualny most.')
+    throw new Error('Nie potwierdziłam wersji i sesji mostu MT5. Uruchom ponownie aktualny terminal.')
   }
   return response
 }

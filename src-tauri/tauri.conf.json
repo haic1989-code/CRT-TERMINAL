@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CRT Terminal",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "identifier": "com.smartflow.crtterminal",
   "build": {
     "beforeDevCommand": "npm run dev:app",
@@ -32,6 +32,7 @@
     "resources": {
       "../mt5-bridge/start.ps1": "mt5-bridge/start.ps1",
       "../mt5-bridge/bridge.py": "mt5-bridge/bridge.py",
+      "../mt5-bridge/execution.py": "mt5-bridge/execution.py",
       "../mt5-bridge/requirements.txt": "mt5-bridge/requirements.txt",
       "../mt5-bridge/wheelhouse/": "mt5-bridge/wheelhouse/"
     }

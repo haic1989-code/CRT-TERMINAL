@@ -138,7 +138,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
       <section className="sf-startup-window">
         <header className="sf-startup-titlebar">
           <span aria-hidden="true" />
-          <div><small>SESJA LOKALNA // SYSTEM RYNKOWY</small><strong id="startup-title">URUCHAMIANIE TERMINALU</strong></div>
+          <div><small>SESJA LOKALNA // SYSTEM RYNKOWY</small><strong id="startup-title">LUNA URUCHAMIA TERMINAL</strong></div>
           <span className="sf-startup-build">START</span>
         </header>
         <div className="sf-startup-content" aria-live="polite">
@@ -147,9 +147,9 @@ export function StartupGate({ children }: { children: ReactNode }) {
             {STATUS_LINES.map((line, index) => <p key={line.label} className={`sf-startup-status sf-startup-status--${index}`}><span>{line.label}</span><b>{index === 2 ? bridgeReady ? line.value : checking ? 'SPRAWDZANIE' : 'OCZEKIWANIE' : phase > index ? line.value : 'OCZEKIWANIE'}</b><i>{index === 2 ? bridgeReady ? 'GOTOWE' : checking ? 'ŁĄCZENIE' : 'BRAK' : phase > index ? 'GOTOWE' : '...'}</i></p>)}
           </div>
           {bridgeReady && phase >= STATUS_LINES.length && <button ref={continueButton} className="sf-startup-ready" type="button" onClick={continueToTerminal} disabled={closing}>
-            <span>TERMINAL GOTOWY</span><b>NACIŚNIJ ENTER, ABY KONTYNUOWAĆ</b><i aria-hidden="true">▌</i>
+            <span>Luna › Jestem gotowa, admin.</span><b>Naciśnij Enter — zabiorę Cię do terminalu.</b><i aria-hidden="true">▌</i>
           </button>}
-          {!bridgeReady && <><p className="sf-startup-wait">{checking ? 'OCZEKIWANIE NA MOST MT5' : 'MOST MT5 NIEDOSTĘPNY'}<span aria-hidden="true">...</span></p>{bridgeStartupMessage && <p className="sf-startup-diagnostic" role="status">{bridgeStartupMessage}</p>}</>}
+          {!bridgeReady && <><p className="sf-startup-wait">{checking ? 'Luna › Łączę się z Twoim MT5' : 'Luna › Nie potwierdziłam jeszcze połączenia z MT5'}<span aria-hidden="true">...</span></p>{bridgeStartupMessage && <p className="sf-startup-diagnostic" role="status">Luna › {bridgeStartupMessage}</p>}</>}
         </div>
         <footer className="sf-startup-footer"><span>SESJA LOKALNA</span><span>WYKRES / WSKAŹNIKI</span><span>STAN: {bridgeReady ? 'GOTOWY' : 'ŁĄCZENIE MT5'}</span></footer>
       </section>

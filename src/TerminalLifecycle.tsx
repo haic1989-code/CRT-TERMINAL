@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { stopMt5Bridge } from './bridgeShutdown'
 import './shutdown-terminal.css'
 
-const lines = ['wyłączanie wskaźników', 'zamykanie strumienia wykresu', 'zamykanie terminalu', 'zamykanie połączenia MT5']
+const lines = ['Wyłączam wskaźniki', 'Zamykam strumień wykresu', 'Zamykam terminal', 'Rozłączam MT5']
 
 export function TerminalLifecycle({children}:{children:ReactNode}) {
   const [closing,setClosing]=useState(false), [phase,setPhase]=useState(0)
@@ -52,9 +52,9 @@ export function TerminalLifecycle({children}:{children:ReactNode}) {
       <div className="sf-startup-content" aria-live="polite">
         <p className="sf-startup-command">User &gt; zamknij-terminal</p>
         <div className="sf-startup-status-list">{lines.map((line,index)=>phase>index&&<p key={line} className={`sf-startup-status sf-startup-status--${index}`}><span>{index===3?'MT5':'SYSTEM'}</span><b>{line}</b><i>{index===3?result==='done'?'WYŁ.':result==='error'?'BŁĄD':'OCZEKIWANIE':'WYŁ.'}</i></p>)}</div>
-        {result==='waiting'&&<p className="sf-startup-wait">ROZŁĄCZANIE...</p>}
-        {result==='done'&&<><h1 className="sf-shutdown-bye">BYE ADMIN !</h1><p className="sf-shutdown-note">Terminal i most są wyłączone.{` `}{desktopApp?'Aplikacja zaraz się zamknie.':'Możesz zamknąć tę kartę.'}</p></>}
-        {result==='error'&&<div role="alert" className="sf-shutdown-error"><p>Nie udało się potwierdzić zatrzymania mostu: {error}</p><button className="sf-startup-ready" onClick={()=>{setResult('waiting');setError('');setAttempt(value=>value+1)}}>PONÓW ZAMYKANIE MOSTU</button></div>}
+        {result==='waiting'&&<p className="sf-startup-wait">Luna › Kończę sesję…</p>}
+        {result==='done'&&<><h1 className="sf-shutdown-bye">Do zobaczenia, admin!</h1><p className="sf-shutdown-note">Luna › Wyłączyłam terminal i most.{` `}{desktopApp?'Aplikacja zaraz się zamknie.':'Możesz zamknąć tę kartę.'}</p></>}
+        {result==='error'&&<div role="alert" className="sf-shutdown-error"><p>Luna › Nie potwierdziłam zatrzymania mostu: {error}</p><button className="sf-startup-ready" onClick={()=>{setResult('waiting');setError('');setAttempt(value=>value+1)}}>PONÓW ZAMYKANIE MOSTU</button></div>}
       </div>
       <footer className="sf-startup-footer"><span>SESJA LOKALNA</span><span>WSKAŹNIKI / WYKRES WYŁ.</span><span>{result==='done'?'MOST MT5 ZATRZYMANY':result==='error'?'NIE POTWIERDZONO ZAMKNIĘCIA':'ZAMYKANIE'}</span></footer>
     </section>

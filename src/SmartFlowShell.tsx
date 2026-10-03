@@ -8,13 +8,15 @@ import './matrix-crt.css'
 import './matrix-hologram.css'
 import { CrtChartConsole } from './CrtChartConsole'
 import { MatrixCommandDeck } from './MatrixCommandDeck'
+import { DemoExecutionPanel } from './DemoExecutionPanel'
+import { lunaMessage, lunaRisk } from './lunaMessages'
 import { manualLotSizing } from './domain/manualLotSizing'
 import { TerminalStatus, type TerminalFocus } from './TerminalStatus'
 import { INDICATOR_CATALOG } from './indicators/catalog'
 import type { IndicatorId, IndicatorPreferences, IndicatorSettings } from './indicators/catalog'
 import { readIndicatorPreferences, writeIndicatorPreferences } from './indicators/preferences'
 import { fetchMt5Bars, fetchMt5Calculation, fetchMt5ContextBars, fetchMt5FxBars, fetchMt5Orders, fetchMt5Positions, fetchMt5SymbolInfo, fetchMt5Symbols, type Mt5Order, type Mt5Position } from './mt5Client'
-import type { AlertRule, BreakEvenMode, EmergencyCloseRequest, MarketBar, MarketContextSnapshot, SymbolSpec, TradePlan } from './domain/contracts'
+import type { AlertRule, BreakEvenMode, MarketBar, MarketContextSnapshot, SymbolSpec, TradePlan } from './domain/contracts'
 import { mt5AccountToDomain, mt5OrderToDomain, mt5PositionToDomain, mt5SymbolToDomain } from './adapters/mt5DomainAdapter'
 import { AlertEngine, BreakevenEngine, ContextSummaryEngine, CurrencyStrengthEngine, KeyLevelsEngine, MarketProfileEngine, MTFContextEngine, PlannerBreakEvenEngine, PortfolioRiskEngine, PositionSizingEngine, RiskGuardEngine, SessionEngine, planRisk as calculatePlanRisk } from './engines'
 import { VegaContextAdvisor } from './engines/vegaContext'
@@ -115,7 +117,7 @@ export function SmartFlowShell() {
   const [rangeScan, setRangeScan] = useState<{id:number; detected:boolean} | null>(null)
   const rangeScanSequence = useRef(0)
   const consoleSequence = useRef(0)
-  const notifyConsole = (text:string) => setConsoleNotice({text, id:++consoleSequence.current})
+  const notifyConsole = (text:string) => setConsoleNotice({text:lunaMessage(text), id:++consoleSequence.current})
   useEffect(() => {
     if (!consoleNotice) return
     const timer = window.setTimeout(() => setConsoleNotice(null), 3600)
@@ -551,7 +553,8 @@ export function SmartFlowShell() {
     setSelectedOrderTicket(null)
     notifyConsole(`POZYCJA ${side === 'long' ? 'DŁUGA' : 'KRÓTKA'} · USTAW NA WYKRESIE`)
     setPlannerRequest({ side, nonce: Date.now(), ...(proposal ? { proposal } : {}) })
-    setToast(proposal ? `Plan VEGA ${side.toUpperCase()} załadowany do Trade Planner Pro` : `Plan ${side.toUpperCase()} gotowy do ustawienia na wykresie`)
+    setDrawer(null)
+    if (!dragon) setToast(lunaMessage(`POZYCJA ${side === 'long' ? 'DŁUGA' : 'KRÓTKA'} · USTAW NA WYKRESIE`))
   }
   const cancelPlan = () => { notifyConsole('PLAN ANULOWANY'); setPlannerLevelRequest(null); setPlannerCancelRequest({ nonce: Date.now() }) }
   const saveAlert = () => {
@@ -622,19 +625,8 @@ export function SmartFlowShell() {
     setDrawer(null)
   }
   const requestEmergencyClose = () => {
-    const request: EmergencyCloseRequest = {
-      positionIds: domainPositions.map((position) => position.id),
-      pendingOrderIds: domainOrders.map((order) => order.id),
-      requestedAt: Date.now(),
-      mode: 'confirm_only',
-    }
-    if (!request.positionIds.length && !request.pendingOrderIds.length) {
-      setToast('Emergency Close: brak pozycji i zleceń oczekujących.')
-      return
-    }
-    const scope = `${request.positionIds.length} pozycji i ${request.pendingOrderIds.length} zleceń oczekujących`
-    if (!window.confirm(`EMERGENCY CLOSE\n\nZakres: ${scope}.\n\nBridge MT5 jest obecnie tylko do odczytu. Potwierdzenie NIE wyśle zleceń do brokera.`)) return
-    setToast(`Emergency Close potwierdzone dla ${scope} · wykonanie zablokowane: bridge read-only.`)
+    notifyConsole('Zamykanie pozycji z terminalu nie jest jeszcze dostępne. Zamknij je bezpośrednio w MT5.')
+    if (!dragon) setToast('Luna › Zamknij pozycje bezpośrednio w MT5. Ta funkcja nie wysyła zleceń zamykających.')
   }
   const candleTimer = formatCountdown(candleRemainingSeconds(timeframe, clockNow))
   const serverTime = formatMt5ServerTime(feed.lastTickAt)
@@ -724,7 +716,7 @@ export function SmartFlowShell() {
           </div>
         </div>
         <div className={`sf-chart-box${selectedIndicator.includes('RSI') && indicatorSettings.RSI?.visible !== false ? ' has-rsi-pane' : ''}`}>
-        {dragon && <aside className="dragon-art matrix-agent-art" aria-label="Statyczne tło wykresu z agentką AI"><img src={`${import.meta.env.BASE_URL}assets/chart-agent-background-v3.png`} alt="Statyczne, ilustracyjne tło wykresu z agentką AI po lewej stronie" hidden={agentAssetMissing} onError={() => setAgentAssetMissing(true)} />{agentAssetMissing && <p className="matrix-asset-status" role="status">Grafika tła wykresu oczekuje na odzyskanie.</p>}</aside>}
+        {dragon && <aside className="dragon-art matrix-agent-art" aria-label="Statyczne tło wykresu z agentką AI"><img src={`${import.meta.env.BASE_URL}assets/chart-agent-background-v3.png`} alt="Statyczne, ilustracyjne tło wykresu z agentką AI po lewej stronie" hidden={agentAssetMissing} onError={() => setAgentAssetMissing(true)} />{agentAssetMissing && <p className="matrix-asset-status" role="status">Luna › Nie mogę wczytać tła wykresu.</p>}</aside>}
           <div className="sf-chart-heading"><div><strong>{symbol}</strong><span> · {timeframe} · {symbolInfo?.description || 'MT5'}</span></div><span className={`sf-chart-status ${feed.status}`}><i />{feed.status === 'live' ? 'LIVE' : feed.status.toUpperCase()}</span></div>
           <div className="sf-chart-canvas" data-target-profit-full={plannerFullTpProfitLabel ?? ''} data-target-loss-full={plannerFullSlLossLabel ?? ''} data-target-profit-tp1={plannerTargetProfitLabels[0] ?? ''} data-target-profit-tp2={plannerTargetProfitLabels[1] ?? ''} data-target-profit-tp3={plannerTargetProfitLabels[2] ?? ''}><MarketChart volumeVisible={volumeVisible} compactFeedStatus={dragon} navigationControlsExternal={dragon} autoScrollEnabled={autoScrollEnabled} onAutoScrollChange={setAutoScrollEnabled} chartShiftEnabled={chartShiftEnabled} onChartShiftChange={setChartShiftEnabled} timeframe={timeframe} symbol={symbol} plannerTargets={plannerTargets} plannerTargetProfitLabels={plannerTargetProfitLabels} plannerFullTpProfitLabel={plannerFullTpProfitLabel} plannerFullSlLossLabel={plannerFullSlLossLabel} plannerLevelRequest={plannerLevelRequest} onPlannerLevelPlacementComplete={(nonce) => setPlannerLevelRequest(current => current?.nonce === nonce ? null : current)} breakEvenMode={breakEvenMode} managedPosition={managedPosition} managedOrder={managedOrder} cancelRequest={plannerCancelRequest} onFeedStateChange={setFeed} onPlannerChange={setPlanner} onBarsChange={setBars} plannerRequest={plannerRequest} drawingRequest={drawingRequest} onDrawingComplete={result => { if (result === 'saved') notifyConsole(`${DRAWING_TOOLS.find(t => t.id === drawTool)?.label.toUpperCase() || 'RYSUNEK'} ZAPISANE`); setDrawingRequest(null); setDrawTool('') }} indicators={selectedIndicator} indicatorSettings={indicatorSettings} marketProfile={profileEnabled ? profile : null} marketProfileView={profileView} referenceLevels={referenceLevels} alerts={activeAlerts} onAlertSelect={focusAlert} simulationTickId={simulationTickId} rangeScanId={rangeScan?.id ?? 0} rangeScanDetected={rangeScan?.detected ?? false} /></div>
           {dragon && <CrtChartConsole notice={consoleNotice} motionPaused={ambientMotionPaused} periodPrompt={periodPrompt} onPeriodCancel={() => setPeriodPrompt(null)} onPeriodSubmit={(id, period) => { setIndicatorSettings(current => ({...current,[id]:{...current[id],visible:true,period}})); setSelectedIndicator(current => current.includes(id) ? current : [...current,id]); setPeriodPrompt(null); notifyConsole(`${id.split(' ')[0]} ${period} WŁĄCZONO`) }} />}
@@ -743,6 +735,7 @@ export function SmartFlowShell() {
       </section>
       <aside className={dragon ? 'sf-right-column matrix-text-column' : 'sf-right-column'}>
         {dragon ? <MatrixCommandDeck
+          quoteSample={`${feed.bid}|${feed.ask}`} executionPanel={<DemoExecutionPanel feed={feed} planner={planner} volume={metrics?.volume ?? null} unsupportedManagement={Object.values(plannerTargets).some(Boolean) || breakEvenMode !== 'off'} />}
           feedStatus={feed.status} contextLive={feed.status === 'live' && contextObservedAt > 0 && Date.now() - contextObservedAt < 65000}
           contextSnapshots={Object.fromEntries(CONTEXT_TIMEFRAMES.map(tf => [tf, JSON.stringify(contextBars[tf]?.at(-1) ?? null)]))}
           onPreviewPhosphor={() => setSimulationTickId(id => id + 1)} onPreviewScan={() => setRangeScan({id:++rangeScanSequence.current,detected:false})} scanRunning={Boolean(rangeScan)}
@@ -789,8 +782,8 @@ export function SmartFlowShell() {
           <div className="sf-guard-state"><span className="sf-shield">⬡</span><strong>{riskGuard.state === 'BLOCKED' ? 'BLOCKED' : riskGuard.state}</strong></div>
           <div className="sf-guard-meter"><span style={{ width: `${Math.min(100, exposure.usedRiskPercent / 5 * 100)}%` }} /></div>
           <div className="sf-risk-detail"><span>Maks. ryzyko</span><b>2.00%</b><span>Ekspozycja</span><b>{exposure.usedRiskPercent.toFixed(2)}%</b><span>Limit dzienny</span><b>{money(account?.day_pnl, account?.currency)}</b></div>
-          {riskGuard.reasons.length > 0 && <button className="sf-block-reason" onClick={() => openDrawer('risk')}>{riskGuard.reasons[0]}</button>}
-          {riskGuard.reasons.length === 0 && riskGuard.warnings.length > 0 && <button className="sf-warning-reason" onClick={() => openDrawer('risk')}>{riskGuard.warnings[0]}</button>}
+          {riskGuard.reasons.length > 0 && <button className="sf-block-reason" onClick={() => openDrawer('risk')}>{lunaRisk(riskGuard.reasons[0])}</button>}
+          {riskGuard.reasons.length === 0 && riskGuard.warnings.length > 0 && <button className="sf-warning-reason" onClick={() => openDrawer('risk')}>{lunaRisk(riskGuard.warnings[0])}</button>}
         </div>}
         </>}
       </aside>

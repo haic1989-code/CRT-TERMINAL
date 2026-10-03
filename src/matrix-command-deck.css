@@ -192,3 +192,26 @@
 .sf-matrix .matrix-command-deck[data-motion="off"] :is(.direction-bar,.direction-bar i,.context-item>span:last-child){transition:none;}
 @keyframes deck-connection-light{0%,100%{opacity:.55}50%{opacity:1}}
 @media(prefers-reduced-motion:reduce){.sf-matrix .matrix-command-deck .deck-feed-state i{animation:none!important;}}
+
+/* Visible optical motion, independent of numeric trend values. */
+.sf-matrix .matrix-command-deck .context-item{grid-template-columns:3ch 62px minmax(0,1fr);gap:6px;}
+.sf-matrix .matrix-command-deck .direction-bar{width:62px;min-width:62px;height:10px;gap:3px;}
+.sf-matrix .matrix-command-deck .direction-beam{width:28px;opacity:.95;background:linear-gradient(90deg,transparent,#f2fffb,currentColor,transparent);mask-image:none;mix-blend-mode:screen;}
+.sf-matrix .matrix-command-deck .direction-bar i{height:100%;box-shadow:0 0 6px currentColor;}
+.sf-matrix .matrix-command-deck .deck-quote-pulse{display:block;padding:7px 5px;margin:0 0 14px;font-size:10px;color:var(--green);border-left:2px solid var(--green);}
+.sf-matrix .matrix-command-deck .lot-slider{height:12px;box-shadow:0 0 12px #e4c58b33;transition:box-shadow .25s;}
+.sf-matrix .matrix-command-deck .lot-slider:active{box-shadow:0 0 20px #ffd774aa;}
+.sf-matrix .matrix-command-deck .demo-execution{min-width:0;padding:16px;border:1px solid #52799a;background:#091d32;}
+.sf-matrix .matrix-command-deck .execution-luna{font-size:12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere;color:var(--cyan);}
+.sf-matrix .matrix-command-deck .execution-options{display:grid;gap:10px;font-size:11px;}
+.sf-matrix .matrix-command-deck .execution-options label{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.sf-matrix .matrix-command-deck .execution-options select,.sf-matrix .matrix-command-deck .execution-options input{max-width:100%;min-width:0;padding:7px;color:var(--ink);background:#09233d;border:1px solid #52799a;font:inherit;}
+.sf-matrix .matrix-command-deck .execution-options input{width:65px;}
+.sf-matrix .matrix-command-deck .demo-execution button{display:block;width:100%;padding:11px 8px;margin-top:10px;border:1px solid #52799a;white-space:normal;font-size:12px;}
+.sf-matrix .matrix-command-deck .demo-execution .execution-send{color:var(--green);border-color:var(--green);background:#103c35;}
+.sf-matrix .matrix-command-deck .demo-execution button:disabled{opacity:.4;cursor:not-allowed;}
+.sf-matrix .matrix-command-deck .execution-review{margin-top:15px;border-top:1px solid #52799a;padding-top:12px;overflow-wrap:anywhere;}
+.sf-matrix .matrix-command-deck .execution-review strong{font-size:12px;}
+.sf-matrix .matrix-command-deck .execution-review dl>div{display:grid;grid-template-columns:6ch minmax(0,1fr);gap:10px;font-size:12px;padding:5px 0;}
+.sf-matrix .matrix-command-deck .execution-review dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;}
+@media(min-width:1151px) and (max-width:1800px){.sf-matrix .matrix-command-deck .pair-grid:has(.context-item){grid-template-columns:1fr;}}
