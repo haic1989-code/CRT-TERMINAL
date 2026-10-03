@@ -1,4 +1,4 @@
-# CRT Terminal 0.1.18
+# CRT Terminal 0.1.19
 
 - Nowy start: rzeczywiste wczytywanie modułów i pisane komunikaty Luny w lewym górnym rogu.
 - Kontrola mostu MT5, wczytanej historii wykresu oraz pozycji i zleceń; brak świeżych ticków nie jest utożsamiany z awarią mostu.
@@ -9,3 +9,6 @@
 Wymagana jednorazowa instalacja 0.1.18, aby włączyć aktualizator. Test przejścia pomiędzy dwoma opublikowanymi wydaniami oraz ocena wizualna na Windows wymagają ręcznej akceptacji. Nie wykonano żadnych operacji brokerskich.
 
 - Stałe nazwy plików aktualizacji bez spacji; korekta adresu pobierania na GitHub.
+
+- Przywrócone szacowane P/L przy rysowanej pozycji, również gdy ostatni tick jest nieaktualny; wartości przybliżone mają prefiks ~, kalkulacja MT5 nadal ma pierwszeństwo.
+- Dodany wewnętrzny margines prawego panelu, aby tekst nie przylegał do krawędzi szkła CRT.

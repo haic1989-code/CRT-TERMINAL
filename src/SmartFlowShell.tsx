@@ -658,9 +658,31 @@ export function SmartFlowShell() {
     return () => { dead = true; window.clearTimeout(timer); controller.abort() }
   }, [brokerPlanKey, feed.status])
   const signedProfit = (value: number | null | undefined) => value == null ? null : `${value < 0 ? '−' : '+'}${money(Math.abs(value), accountDomain.currency)}`
-  const plannerTargetProfitLabels = [0, 1, 2].map(index => signedProfit(currentBrokerPlan?.targets[index]))
-  const plannerFullTpProfitLabel = signedProfit(currentBrokerPlan?.fullTp)
-  const plannerFullSlLossLabel = currentBrokerPlan ? `−${money(currentBrokerPlan.loss, accountDomain.currency)}` : null
+  const estimateValue = (price: number | null | undefined, volume: number) => {
+    if (price == null || !planner || !spec || volume <= 0 || spec.tickSize <= 0) return null
+    const distance = planner.side === 'long' ? price - planner.entry : planner.entry - price
+    const tickValue = distance >= 0 ? (spec.tickValueProfit ?? spec.tickValue) : (spec.tickValueLoss ?? spec.tickValue)
+    if (tickValue <= 0) return null
+    return Math.abs(distance) / spec.tickSize * tickValue * volume
+  }
+  const estimateAtPrice = (price: number | null | undefined, volume: number) => {
+    const amount = estimateValue(price, volume)
+    if (amount == null || price == null || !planner) return null
+    const distance = planner.side === 'long' ? price - planner.entry : planner.entry - price
+    return `~${signedProfit(distance < 0 ? -amount : amount)}`
+  }
+  const plannerTargetProfitLabels = [0, 1, 2].map(index =>
+    signedProfit(currentBrokerPlan?.targets[index]) ?? estimateAtPrice(planTargets[index]?.price, plannerTargetLots[index])
+  )
+  const estimatedFullTp = estimateAtPrice(planner?.tp, sizedPlan?.volume ?? 0)
+  const estimatedFullSl = estimateAtPrice(planner?.sl, sizedPlan?.volume ?? 0)
+  const plannerFullTpProfitLabel = signedProfit(currentBrokerPlan?.fullTp) ?? estimatedFullTp
+  const plannerFullSlLossLabel = currentBrokerPlan
+    ? `−${money(currentBrokerPlan.loss, accountDomain.currency)}`
+    : estimatedFullSl?.replace(/^~/, '~') ?? null
+  const estimatedTargetReward = planTargets.reduce(
+    (sum, target, index) => sum + (estimateValue(target.price, plannerTargetLots[index]) ?? 0), 0
+  )
   useEffect(() => {
     setConsoleNotice(null)
     setDrawingRequest(null)
@@ -756,7 +778,7 @@ export function SmartFlowShell() {
           <div className="dragon-planner-risk">
             <label htmlFor="dragon-risk-range"><span>RISK / TRADE</span><output>{plannerRisk.toFixed(1)}%</output></label>
             <input id="dragon-risk-range" aria-label="Ryzyko na transakcję" type="range" min="0.1" max="2" step="0.1" value={plannerRisk} style={{'--crt-fill': `${(plannerRisk - 0.1) / 1.9 * 100}%`} as CSSProperties} onChange={(event) => setPlannerRisk(Number(event.target.value))} />
-            <div className="dragon-planner-risk-profit"><span>STRATA PRZY SL <b>{plannerFullSlLossLabel ?? '—'}</b></span><span>ZYSK PRZY TP <b>{planTargets.length ? signedProfit(currentBrokerPlan?.reward) ?? '—' : plannerFullTpProfitLabel ?? '—'}</b></span></div>
+            <div className="dragon-planner-risk-profit"><span>STRATA PRZY SL <b>{plannerFullSlLossLabel ?? '—'}</b></span><span>ZYSK PRZY TP <b>{planTargets.length ? signedProfit(currentBrokerPlan?.reward) ?? (estimatedTargetReward > 0 ? `~${signedProfit(estimatedTargetReward)}` : '—') : plannerFullTpProfitLabel ?? '—'}</b></span></div>
           </div>
           {planner ? <>
             <div className="dragon-target-selector" aria-label="Wybierz cel TP do ustawienia">{(['tp1', 'tp2', 'tp3'] as const).map((target) => <button key={target} type="button" aria-pressed={plannerTargets[target]} className={`${plannerTargets[target] ? 'is-active' : ''}${plannerLevelRequest?.target === target ? ' is-placing' : ''}`} onClick={() => selectPlannerTarget(target)}>{target.toUpperCase()}</button>)}</div>

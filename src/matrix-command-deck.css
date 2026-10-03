@@ -216,3 +216,6 @@
 .sf-matrix .matrix-command-deck .execution-review dl>div{display:grid;grid-template-columns:6ch minmax(0,1fr);gap:10px;font-size:12px;padding:5px 0;}
 .sf-matrix .matrix-command-deck .execution-review dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;}
 @media(min-width:1151px) and (max-width:1800px){.sf-matrix .matrix-command-deck .pair-grid:has(.context-item){grid-template-columns:1fr;}}
+
+/* Keep CRT console text clear of the glass edge at desktop DPI scales. */
+.sf-matrix .sf-right-column.matrix-text-column > .matrix-command-deck{padding-left:clamp(28px,2vw,42px);padding-right:clamp(22px,1.5vw,32px);}
