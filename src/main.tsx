@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { SmartFlowShell } from './SmartFlowShell'
+import { loadTerminal } from './bootModules'
+const SmartFlowShell = React.lazy(() => loadTerminal().then(module => ({ default: module.SmartFlowShell })))
 import { StartupGate } from './StartupGate'
 import { TerminalLifecycle } from './TerminalLifecycle'
 
@@ -11,6 +12,6 @@ if (!rootElement) {
 }
 
 createRoot(rootElement).render(
-  React.createElement(StartupGate, null, React.createElement(TerminalLifecycle, null, React.createElement(SmartFlowShell)))
+  React.createElement(StartupGate, null, React.createElement(TerminalLifecycle, null, React.createElement(React.Suspense, { fallback: null }, React.createElement(SmartFlowShell))))
 )
 

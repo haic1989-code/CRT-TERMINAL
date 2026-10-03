@@ -1,4 +1,4 @@
-name: CRT Terminal Windows Installer
+name: CRT Terminal Signed Release
 
 on:
   push:
@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: crt-terminal-installer-${{ github.ref }}
@@ -47,8 +47,37 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
-      - name: Build CRT Terminal installer
+      - name: Require signing key
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:SIGNING_KEY) { throw 'Configure TAURI_SIGNING_PRIVATE_KEY in repository Actions secrets before publishing updates.' }
+
+      - name: Build signed CRT Terminal installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: npm run app:build -- --bundles nsis
+
+      - name: Prepare signed update manifest
+        run: node scripts/prepare-update-release.mjs
+
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $releaseTag = "v$releaseVersion"
+          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $releaseTag already exists; increment app version. Published releases must not be replaced." }
+          gh release create $releaseTag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "CRT Terminal $releaseVersion" --notes-file docs/current-release.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release draft creation failed' }
+          $releaseFiles = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*_x64-setup.exe,src-tauri/target/release/bundle/nsis/*_x64-setup.exe.sig | ForEach-Object { $_.FullName })
+          gh release upload $releaseTag @releaseFiles .smartflow-runtime/release/latest.json --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed; draft remains unpublished' }
+          gh release edit $releaseTag --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+
 
       - name: Publish installer artifact
         uses: actions/upload-artifact@v6

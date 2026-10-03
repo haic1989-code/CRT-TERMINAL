@@ -1,7 +1,7 @@
 {
   "name": "crt-terminal",
   "private": true,
-  "version": "0.1.16",
+  "version": "0.1.17",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -23,6 +23,8 @@
     "@react-three/postprocessing": "3.1.1",
     "@react-three/uikit": "1.0.76",
     "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-process": "2.4.0",
+    "@tauri-apps/plugin-updater": "2.13.1",
     "gsap": "3.15.0",
     "lightweight-charts": "^5.2.1",
     "postprocessing": "6.39.5",

@@ -885,6 +885,7 @@ export function MarketChart({
     })
 
     candles.setData(data)
+    if (data.length && feed.lastTickAt) window.dispatchEvent(new Event('crt:chart-ready'))
     const volumes = chart.addSeries(HistogramSeries, { priceScaleId: 'volume', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false })
     volumes.setData(volumeData)
     volumes.applyOptions({ visible: volumeVisible })

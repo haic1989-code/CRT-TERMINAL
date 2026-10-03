@@ -1,4 +1,22 @@
 .startup-app-content { width:100%; height:100%; }
+.sf-startup-overlay.sf-startup-boot { place-items:start; padding:clamp(22px,3.5vw,70px); }
+.crt-boot-console { position:relative; z-index:2; width:min(1050px,100%); max-height:90vh; display:flex; flex-direction:column; color:#8bf5c2; font-size:clamp(13px,.85vw,18px); text-shadow:0 0 9px #36dc9d44; }
+.crt-boot-console header small { color:#559caa; letter-spacing:.15em; }
+.crt-boot-console h1 { font-size:1.2em; letter-spacing:.12em; margin:10px 0 24px; }
+.crt-boot-log { overflow:auto; scrollbar-width:thin; scrollbar-color:#28855d transparent; }
+.crt-boot-log p { margin:0 0 10px; overflow-wrap:anywhere; }
+.crt-boot-log .is-warning, .crt-boot-diagnostic { color:#dfbd73; }
+.crt-boot-diagnostic { font-size:.85em; overflow-wrap:anywhere; }
+.crt-boot-accessible { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.crt-boot-cursor { animation:crt-boot-blink 800ms steps(2) infinite; font-style:normal; }
+.crt-boot-actions { display:flex; gap:16px; flex-wrap:wrap; margin:16px 0; }
+.crt-boot-console button { font:inherit; padding:12px 16px; color:#99ffd0; background:#07312799; border:1px solid #32876a; cursor:pointer; text-align:left; }
+.crt-boot-console button:focus-visible { outline:2px solid #91ffd8; outline-offset:4px; }
+.crt-boot-console button:disabled { opacity:.45; cursor:wait; }
+.crt-boot-enter { margin-top:18px; }
+.sf-startup-boot.is-closing .crt-boot-console { animation:sf-startup-warp-window 450ms ease-in both; }
+@keyframes crt-boot-blink { to { opacity:0; } }
+@media(prefers-reduced-motion:reduce) { .crt-boot-cursor { animation:none; } }
 .sf-startup-overlay {
   position:fixed; inset:0; z-index:10000; display:grid; place-items:center; overflow:hidden;
   padding:24px; background:#01040a; color:#daf4f4;
