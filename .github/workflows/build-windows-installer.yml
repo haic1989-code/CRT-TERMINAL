@@ -72,7 +72,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw "Release $releaseTag already exists; increment app version. Published releases must not be replaced." }
           gh release create $releaseTag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "CRT Terminal $releaseVersion" --notes-file docs/current-release.md
           if ($LASTEXITCODE -ne 0) { throw 'Release draft creation failed' }
-          $releaseFiles = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*_x64-setup.exe,src-tauri/target/release/bundle/nsis/*_x64-setup.exe.sig | ForEach-Object { $_.FullName })
+          $releaseFiles = @(Get-ChildItem .smartflow-runtime/release/*_x64-setup.exe,.smartflow-runtime/release/*_x64-setup.exe.sig | ForEach-Object { $_.FullName })
           gh release upload $releaseTag @releaseFiles .smartflow-runtime/release/latest.json --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw 'Release upload failed; draft remains unpublished' }
           gh release edit $releaseTag --repo $env:GITHUB_REPOSITORY --draft=false --latest
