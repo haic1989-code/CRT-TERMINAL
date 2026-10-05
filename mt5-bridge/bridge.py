@@ -988,7 +988,7 @@ def _run_replay_strategy(run_id: str) -> None:
             if run["cancel"].is_set() or _closing.is_set():
                 raise RuntimeError("Symulacja została zatrzymana przed uruchomieniem procesu.")
             process = subprocess.Popen(
-                [sys.executable, "-I", "-S", str(Path(__file__).with_name("replay_worker.py"))],
+                [sys.executable, "-X", "utf8", "-I", "-S", str(Path(__file__).with_name("replay_worker.py"))],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", bufsize=1, env=safe_env,
             )
