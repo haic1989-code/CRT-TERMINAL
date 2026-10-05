@@ -299,6 +299,15 @@ export type ReplayImportJob = {
 
 export type ReplayTick = Pick<Mt5Tick, 'time_msc' | 'bid' | 'ask' | 'last' | 'volume' | 'volume_real' | 'flags'>
 
+export type ReplayStrategy = { id: string; name: string; sha256: string; api_version: number; created_at: string; updated_at: string }
+export type ReplayRunEvent = { sequence: number; kind: string; time_msc: number; [key: string]: unknown }
+export type ReplayRun = {
+  id: string; archive_id: string; strategy_id: string;
+  status: 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';
+  params: Record<string, unknown>; report: Record<string, unknown> | null; error: string | null;
+  progress_ticks: number; total_ticks: number; created_at: string; updated_at: string;
+}
+
 export function startReplayImport(request: { symbol: string; fromMs: number; toMs: number }, signal?: AbortSignal) {
   return localRequest<ReplayImportJob>('/v1/replay/imports', {
     method: 'POST',
@@ -331,6 +340,42 @@ export function fetchReplayTicks(archiveId: string, offset = 0, limit = 10_000, 
   const query = new URLSearchParams({ offset: String(offset), limit: String(limit) })
   return localFetch<{ offset: number; limit: number; total: number; values: ReplayTick[] }>(
     `/v1/replay/archives/${encodeURIComponent(archiveId)}/ticks?${query.toString()}`,
+    signal,
+  )
+}
+
+export function fetchReplayStrategies(signal?: AbortSignal) {
+  return localFetch<{ api_version: number; values: ReplayStrategy[] }>('/v1/replay/strategies', signal)
+}
+
+export function saveReplayStrategy(name: string, source: string, signal?: AbortSignal) {
+  return localRequest<ReplayStrategy>('/v1/replay/strategies', {
+    method: 'POST', cache: 'no-store', signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, source }),
+  })
+}
+
+export function startReplayRun(request: { archiveId: string; strategyId: string; params?: Record<string, unknown> }, signal?: AbortSignal) {
+  return localRequest<ReplayRun>('/v1/replay/runs', {
+    method: 'POST', cache: 'no-store', signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ archive_id: request.archiveId, strategy_id: request.strategyId, params: request.params ?? {} }),
+  })
+}
+
+export function fetchReplayRun(runId: string, signal?: AbortSignal) {
+  return localFetch<ReplayRun>(`/v1/replay/runs/${encodeURIComponent(runId)}`, signal)
+}
+
+export function cancelReplayRun(runId: string, signal?: AbortSignal) {
+  return localRequest<ReplayRun>(`/v1/replay/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST', cache: 'no-store', signal })
+}
+
+export function fetchReplayRunEvents(runId: string, offset = 0, limit = 500, signal?: AbortSignal) {
+  const query = new URLSearchParams({ offset: String(offset), limit: String(limit) })
+  return localFetch<{ offset: number; limit: number; total: number; values: ReplayRunEvent[] }>(
+    `/v1/replay/runs/${encodeURIComponent(runId)}/events?${query.toString()}`,
     signal,
   )
 }

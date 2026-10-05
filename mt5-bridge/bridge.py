@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import os
+import ast
 import math
+import subprocess
+import sys
 import threading
 import secrets
 import json
 import socket
 import time
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -119,6 +123,9 @@ replay_store.initialize(_replay_data_dir)
 _replay_jobs_lock = threading.RLock()
 _replay_jobs: dict[str, dict[str, Any]] = {}
 _active_replay_job: str | None = None
+_replay_runs_lock = threading.RLock()
+_replay_runs: dict[str, dict[str, Any]] = {}
+_active_replay_run: str | None = None
 
 app = FastAPI(
     title="CRT Terminal MT5 Local Bridge",
@@ -520,6 +527,16 @@ def _authorize_runtime(request: Request) -> None:
         raise HTTPException(status_code=403, detail={"error": "RUNTIME_ORIGIN_DENIED"})
 
 
+def _stop_replay_workers() -> None:
+    with _replay_runs_lock:
+        active_runs = list(_replay_runs.values())
+        for run in active_runs:
+            run["cancel"].set()
+            process = run.get("process")
+            if process and process.poll() is None:
+                process.terminate()
+
+
 @app.get("/v1/runtime")
 def runtime(request: Request):
     _authorize_runtime(request)
@@ -535,6 +552,7 @@ def shutdown(request: Request):
     if _server is None:
         raise HTTPException(status_code=503, detail={"error": "SHUTDOWN_CONTROLLER_UNAVAILABLE"})
     _closing.set()
+    _stop_replay_workers()
     _server.should_exit = True
     return {"accepted": True, "instance": _instance}
 
@@ -931,6 +949,208 @@ def replay_archive_ticks(
     return page
 
 
+def _replay_run_payload(run: dict[str, Any]) -> dict[str, Any]:
+    stored = replay_store.get_run(run["id"])
+    return {**(stored or {}), "progress_ticks": run.get("progress_ticks", 0), "total_ticks": run.get("total_ticks", 0)}
+
+
+def _run_replay_strategy(run_id: str) -> None:
+    global _active_replay_run
+    with _replay_runs_lock:
+        run = _replay_runs[run_id]
+        run["status"] = "running"
+    replay_store.update_run(run_id, "running")
+    process: subprocess.Popen[str] | None = None
+    try:
+        if run["cancel"].is_set():
+            replay_store.update_run(run_id, "cancelled", error="Symulacja została anulowana przed startem.")
+            with _replay_runs_lock:
+                run["status"] = "cancelled"
+            return
+        strategy_dir = _replay_data_dir / "FXReplay" / "strategies"
+        strategy_dir.mkdir(parents=True, exist_ok=True)
+        strategy_path = strategy_dir / f"{run['strategy_id']}.py"
+        source = replay_store.get_strategy_source(run["strategy_id"])
+        if source is None:
+            raise ValueError("Nie znaleziono źródła wybranej strategii.")
+        strategy_path.write_text(source, encoding="utf-8", newline="\n")
+        request_data = {
+            "database_path": str(replay_store.database_path()),
+            "run_id": run_id,
+            "archive_id": run["archive_id"],
+            "strategy_path": str(strategy_path),
+            "params": run["params"],
+        }
+        # -I -S keeps the worker independent of site-packages, including the MT5 package.
+        safe_env = {key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP") if key in os.environ}
+        safe_env["PYTHONIOENCODING"] = "utf-8"
+        with _replay_runs_lock:
+            if run["cancel"].is_set() or _closing.is_set():
+                raise RuntimeError("Symulacja została zatrzymana przed uruchomieniem procesu.")
+            process = subprocess.Popen(
+                [sys.executable, "-I", "-S", str(Path(__file__).with_name("replay_worker.py"))],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", bufsize=1, env=safe_env,
+            )
+            run["process"] = process
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write(json.dumps(request_data, ensure_ascii=False, allow_nan=False) + "\n")
+        process.stdin.close()
+        result: dict[str, Any] | None = None
+        event_batch: list[dict[str, Any]] = []
+        for line in process.stdout:
+            with _replay_runs_lock:
+                cancelled = run["cancel"].is_set()
+            if cancelled:
+                process.terminate()
+                break
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(message, dict) and isinstance(message.get("progress"), int):
+                with _replay_runs_lock:
+                    run["progress_ticks"] = message["progress"]
+            elif isinstance(message, dict) and isinstance(message.get("event"), dict):
+                event_batch.append(message["event"])
+                if len(event_batch) >= 500:
+                    replay_store.append_run_events(run_id, event_batch)
+                    event_batch.clear()
+            elif isinstance(message, dict) and "complete" in message:
+                result = message
+        if event_batch:
+            replay_store.append_run_events(run_id, event_batch)
+        exit_code = process.wait(timeout=10)
+        with _replay_runs_lock:
+            cancelled = run["cancel"].is_set()
+        if cancelled:
+            replay_store.update_run(run_id, "cancelled", error="Symulacja została anulowana.")
+            with _replay_runs_lock:
+                run["status"] = "cancelled"
+            return
+        if exit_code != 0 or not result or not result.get("complete"):
+            reason = str((result or {}).get("error") or f"Proces symulacji zakończył się kodem {exit_code}.")
+            replay_store.update_run(run_id, "failed", error=reason)
+            with _replay_runs_lock:
+                run.update(status="failed", error=reason)
+            return
+        report = result["report"]
+        replay_store.update_run(run_id, "complete", report=report)
+        with _replay_runs_lock:
+            run.update(status="complete", progress_ticks=report["tick_count"])
+    except Exception as error:
+        reason = str(error)[:1000]
+        with _replay_runs_lock:
+            cancelled = run["cancel"].is_set()
+            run.update(status="cancelled" if cancelled else "failed", error=reason)
+        replay_store.update_run(run_id, "cancelled" if cancelled else "failed", error=reason)
+    finally:
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        with _replay_runs_lock:
+            run.pop("process", None)
+            if _active_replay_run == run_id:
+                _active_replay_run = None
+
+
+@app.get("/v1/replay/strategies")
+def replay_strategies(request: Request):
+    _authorize_runtime(request)
+    return {"api_version": 1, "values": replay_store.list_strategies()}
+
+
+@app.post("/v1/replay/strategies", status_code=201)
+def replay_strategy_create(request: Request, body: dict[str, Any]):
+    _authorize_runtime(request)
+    name = body.get("name")
+    source = body.get("source")
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_STRATEGY_NAME_INVALID"})
+    if not isinstance(source, str) or not source.strip() or len(source.encode("utf-8")) > 256_000:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_STRATEGY_SOURCE_INVALID", "hint": "Skrypt musi zawierać do 256 KB kodu Python."})
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_STRATEGY_SYNTAX_ERROR", "line": error.lineno, "hint": error.msg}) from error
+    functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    missing = sorted({"on_start", "on_tick", "on_stop"} - functions)
+    if missing:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_STRATEGY_CALLBACKS_MISSING", "callbacks": missing})
+    return replay_store.save_strategy(name.strip(), source)
+
+
+@app.post("/v1/replay/runs", status_code=202)
+def replay_run_start(request: Request, body: dict[str, Any]):
+    global _active_replay_run
+    _authorize_runtime(request)
+    archive_id = body.get("archive_id")
+    strategy_id = body.get("strategy_id")
+    params = body.get("params", {})
+    if not isinstance(archive_id, str) or not isinstance(strategy_id, str) or not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_RUN_REQUEST_INVALID"})
+    try:
+        json.dumps(params, allow_nan=False)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_PARAMS_INVALID"}) from error
+    if len(json.dumps(params, ensure_ascii=False)) > 16_000:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_PARAMS_TOO_LARGE"})
+    archive = replay_store.get_archive(archive_id)
+    if archive is None or archive["status"] != "complete":
+        raise HTTPException(status_code=409, detail={"error": "REPLAY_ARCHIVE_INCOMPLETE"})
+    if replay_store.get_strategy(strategy_id) is None:
+        raise HTTPException(status_code=404, detail={"error": "REPLAY_STRATEGY_NOT_FOUND"})
+    with _replay_runs_lock:
+        if _active_replay_run:
+            raise HTTPException(status_code=409, detail={"error": "REPLAY_RUN_ALREADY_ACTIVE", "run_id": _active_replay_run})
+        run_id = str(uuid.uuid4())
+        replay_store.create_run(run_id, archive_id, strategy_id, params)
+        run = {"id": run_id, "archive_id": archive_id, "strategy_id": strategy_id, "params": params, "status": "queued", "progress_ticks": 0, "total_ticks": archive["tick_count"], "cancel": threading.Event()}
+        _replay_runs[run_id] = run
+        _active_replay_run = run_id
+    threading.Thread(target=_run_replay_strategy, args=(run_id,), name=f"crt-replay-run-{run_id[:8]}", daemon=True).start()
+    return _replay_run_payload(run)
+
+
+@app.get("/v1/replay/runs/{run_id}")
+def replay_run_status(request: Request, run_id: str):
+    _authorize_runtime(request)
+    with _replay_runs_lock:
+        run = _replay_runs.get(run_id)
+    if run is not None:
+        return _replay_run_payload(run)
+    stored = replay_store.get_run(run_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail={"error": "REPLAY_RUN_NOT_FOUND"})
+    return {**stored, "progress_ticks": stored["report"]["tick_count"] if stored["report"] else 0, "total_ticks": stored["report"]["tick_count"] if stored["report"] else 0}
+
+
+@app.post("/v1/replay/runs/{run_id}/cancel")
+def replay_run_cancel(request: Request, run_id: str):
+    _authorize_runtime(request)
+    with _replay_runs_lock:
+        run = _replay_runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail={"error": "REPLAY_RUN_NOT_FOUND"})
+        run["cancel"].set()
+        process = run.get("process")
+    if process and process.poll() is None:
+        process.terminate()
+    return _replay_run_payload(run)
+
+
+@app.get("/v1/replay/runs/{run_id}/events")
+def replay_run_events(request: Request, run_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=500, ge=1, le=5000)):
+    _authorize_runtime(request)
+    page = replay_store.get_run_events(run_id, offset, limit)
+    if page is None:
+        raise HTTPException(status_code=404, detail={"error": "REPLAY_RUN_NOT_FOUND"})
+    return page
+
+
 @app.get("/v1/calculate")
 def calculate(action: str, symbol: str, side: str, volume: float, price: float, stop: float | None = None):
     normalized_action = action.lower()
@@ -1022,6 +1242,7 @@ if __name__ == "__main__":
         _server.run(sockets=[listener])
     finally:
         _closing.set()
+        _stop_replay_workers()
         listener.close()
         if endpoint_file:
             Path(endpoint_file).unlink(missing_ok=True)

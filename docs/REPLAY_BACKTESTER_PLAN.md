@@ -81,11 +81,11 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 
 ### Etap 3 — Python i symulator
 
-- [ ] Zdefiniować wersjonowany interfejs skryptu: `on_start`, `on_tick`, `on_stop` oraz konfigurację parametrów.
-- [ ] Uruchamiać skrypt w osobnym lokalnym procesie bez połączenia z MT5.
-- [ ] Udostępnić wyłącznie symulowane operacje: BUY/SELL, BUY LIMIT/SELL LIMIT, SL/TP, zamknięcie i częściowe zamknięcie.
-- [ ] Rozliczać BUY po Ask i wyjście po Bid; SELL po Bid i wyjście po Ask.
-- [ ] Zapisać kod/wersję API, parametry, hash archiwum, koszty i zdarzenia w raporcie uruchomienia.
+- [x] Zdefiniować wersjonowany interfejs skryptu: `on_start`, `on_tick`, `on_stop` oraz konfigurację parametrów.
+- [x] Uruchamiać skrypt w osobnym lokalnym procesie bez pakietów zainstalowanych w środowisku MT5.
+- [x] Udostępnić wyłącznie symulowane operacje: BUY/SELL, BUY LIMIT/SELL LIMIT, SL/TP, zamknięcie i częściowe zamknięcie.
+- [x] Rozliczać BUY po Ask i wyjście po Bid; SELL po Bid i wyjście po Ask.
+- [x] Zapisać kod/wersję API, parametry, hash archiwum, jawne założenia kosztów i stronicowane zdarzenia.
 - [ ] Kryterium ukończenia: to samo archiwum, skrypt i parametry dają ten sam dziennik transakcji przy ponownym uruchomieniu.
 
 ### Etap 4 — przycisk i widok FX Replay

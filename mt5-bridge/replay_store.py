@@ -58,6 +58,35 @@ def initialize(data_dir: str | Path) -> Path:
                     ON ticks(archive_id, time_msc, sequence);
                 CREATE INDEX IF NOT EXISTS idx_archives_status_created
                     ON archives(status, created_at DESC);
+                CREATE TABLE IF NOT EXISTS strategies (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    api_version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS replay_runs (
+                    id TEXT PRIMARY KEY,
+                    archive_id TEXT NOT NULL REFERENCES archives(id),
+                    strategy_id TEXT NOT NULL REFERENCES strategies(id),
+                    status TEXT NOT NULL,
+                    params_json TEXT NOT NULL,
+                    report_json TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_replay_runs_created
+                    ON replay_runs(created_at DESC);
+                CREATE TABLE IF NOT EXISTS replay_run_events (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES replay_runs(id) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_replay_events_run_sequence
+                    ON replay_run_events(run_id, sequence);
             """)
             db.execute("PRAGMA journal_mode=WAL")
             if not _initialized:
@@ -65,8 +94,18 @@ def initialize(data_dir: str | Path) -> Path:
                     "UPDATE archives SET status='interrupted', error='Aplikacja została zamknięta przed końcem importu.', updated_at=? WHERE status='importing'",
                     (_now(),),
                 )
+                db.execute(
+                    "UPDATE replay_runs SET status='failed', error='Proces FX Replay został przerwany przy zamknięciu aplikacji.', updated_at=? WHERE status IN ('queued','running')",
+                    (_now(),),
+                )
                 _initialized = True
         return _db_path
+
+
+def database_path() -> Path:
+    if _db_path is None:
+        raise RuntimeError("Replay archive store is not initialized")
+    return _db_path
 
 
 def _connect() -> sqlite3.Connection:
@@ -261,3 +300,95 @@ def get_archive_ticks(archive_id: str, offset: int, limit: int) -> dict[str, Any
             (archive_id, limit, offset),
         ).fetchall()
     return {"offset": offset, "limit": limit, "total": int(archive["tick_count"]), "values": [dict(row) for row in rows]}
+
+
+def save_strategy(name: str, source: str) -> dict[str, Any]:
+    strategy_id = str(uuid.uuid4())
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    now = _now()
+    with _db_lock, _connection() as db:
+        db.execute(
+            "INSERT INTO strategies(id,name,source,sha256,api_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (strategy_id, name, source, digest, 1, now, now),
+        )
+    return get_strategy(strategy_id) or {}
+
+
+def _strategy_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"], "name": row["name"], "sha256": row["sha256"],
+        "api_version": int(row["api_version"]), "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def get_strategy(strategy_id: str) -> dict[str, Any] | None:
+    with _db_lock, _connection() as db:
+        row = db.execute("SELECT * FROM strategies WHERE id=?", (strategy_id,)).fetchone()
+    return _strategy_payload(row) if row else None
+
+
+def get_strategy_source(strategy_id: str) -> str | None:
+    with _db_lock, _connection() as db:
+        row = db.execute("SELECT source FROM strategies WHERE id=?", (strategy_id,)).fetchone()
+    return str(row[0]) if row else None
+
+
+def list_strategies() -> list[dict[str, Any]]:
+    with _db_lock, _connection() as db:
+        rows = db.execute("SELECT * FROM strategies ORDER BY created_at DESC").fetchall()
+    return [_strategy_payload(row) for row in rows]
+
+
+def create_run(run_id: str, archive_id: str, strategy_id: str, params: dict[str, Any]) -> None:
+    now = _now()
+    with _db_lock, _connection() as db:
+        db.execute(
+            "INSERT INTO replay_runs(id,archive_id,strategy_id,status,params_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (run_id, archive_id, strategy_id, "queued", json.dumps(params, ensure_ascii=False, allow_nan=False), now, now),
+        )
+
+
+def update_run(run_id: str, status: str, report: dict[str, Any] | None = None, error: str | None = None) -> None:
+    if status not in {"running", "complete", "failed", "cancelled"}:
+        raise ValueError("Invalid replay run state")
+    with _db_lock, _connection() as db:
+        db.execute(
+            "UPDATE replay_runs SET status=?,report_json=?,error=?,updated_at=? WHERE id=?",
+            (status, json.dumps(report, ensure_ascii=False, allow_nan=False) if report is not None else None, (error or "")[:1000] or None, _now(), run_id),
+        )
+
+
+def get_run(run_id: str) -> dict[str, Any] | None:
+    with _db_lock, _connection() as db:
+        row = db.execute("SELECT * FROM replay_runs WHERE id=?", (run_id,)).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"], "archive_id": row["archive_id"], "strategy_id": row["strategy_id"],
+        "status": row["status"], "params": json.loads(row["params_json"]),
+        "report": json.loads(row["report_json"]) if row["report_json"] else None,
+        "error": row["error"], "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+
+
+def append_run_events(run_id: str, events: Iterable[dict[str, Any]]) -> int:
+    payloads = [(run_id, json.dumps(event, ensure_ascii=False, allow_nan=False, separators=(",", ":"))) for event in events]
+    if not payloads:
+        return 0
+    with _db_lock, _connection() as db:
+        db.executemany("INSERT INTO replay_run_events(run_id,payload_json) VALUES(?,?)", payloads)
+    return len(payloads)
+
+
+def get_run_events(run_id: str, offset: int, limit: int) -> dict[str, Any] | None:
+    with _db_lock, _connection() as db:
+        run = db.execute("SELECT id FROM replay_runs WHERE id=?", (run_id,)).fetchone()
+        if run is None:
+            return None
+        total = int(db.execute("SELECT COUNT(*) FROM replay_run_events WHERE run_id=?", (run_id,)).fetchone()[0])
+        rows = db.execute(
+            "SELECT sequence,payload_json FROM replay_run_events WHERE run_id=? ORDER BY sequence LIMIT ? OFFSET ?",
+            (run_id, limit, offset),
+        ).fetchall()
+    return {"offset": offset, "limit": limit, "total": total, "values": [{"sequence": int(row["sequence"]), **json.loads(row["payload_json"])} for row in rows]}

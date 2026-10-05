@@ -65,6 +65,49 @@ Desktop przekazuje mostowi prywatną ścieżkę katalogu danych. Ręczny bridge 
   aplikacji oznacza niedokończony import jako `interrupted`; takie dane nie są
   dostępne dla odtwarzacza.
 
+## FX Replay — skrypty Python i symulacja
+
+Kontrakt strategii ma `api_version=1` i wymaga funkcji `on_start(context)`,
+`on_tick(context, tick)` oraz `on_stop(context)`. Parametry są przekazywane jako
+`context.params`; bieżące dane rynku znajdują się w `context.tick`, a specyfikacja
+instrumentu w `context.spec`. Kontekst oferuje `buy`, `sell`, `buy_limit`,
+`sell_limit` oraz `close(position_id, volume=None)`. To wyłącznie symulator.
+
+Minimalny przykład skryptu:
+
+```python
+position_id = None
+
+def on_start(context):
+    global position_id
+    position_id = None
+
+def on_tick(context, tick):
+    global position_id
+    if position_id is None and tick["ask"] > 0:
+        position_id = context.buy(context.spec["volume_min"])
+
+def on_stop(context):
+    pass
+```
+
+- `POST /v1/replay/strategies` przyjmuje `name` i źródło `source`; kod jest
+  walidowany składniowo i jego SHA-256 trafia do manifestu strategii.
+- `GET /v1/replay/strategies` zwraca metadane dostępnych skryptów.
+- `POST /v1/replay/runs` przyjmuje `archive_id`, `strategy_id` i opcjonalne `params`.
+  `GET /v1/replay/runs/{id}` pokazuje stan/progres/raport; `POST .../{id}/cancel`
+  anuluje obliczenie; `GET .../{id}/events?offset=0&limit=500` stronicuje dziennik.
+- Proces wykonawczy uruchamia się z `-I -S`, więc nie widzi pakietu MetaTrader5
+  z lokalnego środowiska bridge. Strategie są kodem lokalnym użytkownika i nie są
+  sandboxem systemowym; uruchamiaj tylko zaufane pliki.
+- Aby ponowić przebieg deterministycznie, skrypt powinien zależeć wyłącznie od
+  przekazanego ticka, stanu i parametrów. Generator `random` jest ustawiany z hash
+  archiwum; zegar systemowy, pliki i inne zewnętrzne źródła nie są zamrażane.
+- BUY wchodzi po Ask i wychodzi po Bid; SELL odwrotnie. Limit wypełnia się przy
+  pierwszym kwalifikującym się ticku, z poprawą ceny. SL/TP są sprawdzane po
+  stronie ceny zamknięcia. Prowizja, swap i poślizg pozostają niemodelowane;
+  wynik pieniężny nie jest szacowany.
+
 ## Uruchomienie — Windows
 
 1. Uruchom MetaTrader 5 i zaloguj się na konto brokerskie.
