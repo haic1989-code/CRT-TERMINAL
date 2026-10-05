@@ -1,7 +1,16 @@
 # CRT Terminal — lokalny odtwarzacz i tester strategii
 
-**Stan:** konstrukcja zatwierdzona; przygotowanie pierwszego etapu\
+**Stan:** plan gotowy; implementacja jeszcze nierozpoczęta\
 **Zakres V1:** jeden instrument, rzeczywiste ticki MT5, skrypty strategii w Pythonie, wyłącznie symulowane zlecenia.
+
+## Postęp
+
+- [x] Uzgodnić rzeczywiste ticki MT5 jako jedyne źródło danych testowych.
+- [x] Uzgodnić lokalne skrypty Python zamiast uruchamiania EA MQL5.
+- [x] Uzgodnić przewijanie odtworzonego przebiegu w przód i w tył.
+- [x] Uzgodnić przycisk `FX REPLAY` oraz CRT styl dedykowanego widoku.
+- [x] Zapisać i wypchnąć plan do repozytorium.
+- [ ] Rozpocząć implementację pierwszego etapu: uruchamianie terminalu offline.
 
 ## Cel
 
@@ -51,33 +60,51 @@ Silnik przyjmuje sygnały deterministycznie w kolejności ticków. Zmiana kodu, 
 
 Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworzyć wiele ticków między klatkami obrazu; wykres odświeża się osobno, zgodnie z prędkością odtwarzania. Sterowanie obejmuje Start/Pauza, krok tick/bar, prędkość i suwak czasu. Cofanie oraz skok do wybranego czasu korzystają z wcześniej zapisanego dziennika wyników.
 
-## Etapy realizacji
+## Lista realizacji
 
-### 1. Historia tickowa
+### Etap 1 — start offline
 
-- Rozdzielić gotowość startu terminalu od gotowości MT5, aby lokalny tester uruchamiał się bez brokera.
-- Dodać do mostu pobieranie zakresu rzeczywistych ticków z walidacją i limitem zakresu.
-- Dodać kontrakt zbioru CRT, lokalny zapis oraz ekran wyboru symbolu/zakresu i postęp importu.
-- Pokazać liczbę ticków, źródło, zakres oraz stan kompletności przed rozpoczęciem testu.
+- [ ] Rozdzielić gotowość modułów CRT od gotowości mostu MT5.
+- [ ] Pozwolić przejść do terminalu bez MT5; pokazać uczciwy status offline i pusty wykres bez danych przykładowych.
+- [ ] Zachować obecny start live, kontrolę aktualizacji i komunikaty Luny.
+- [ ] Kryterium ukończenia: aplikacja uruchamia się bez MT5, a połączenie live nadal działa po jego dostępności.
 
-### 2. Lokalny silnik i API Python
+### Etap 2 — import i archiwum ticków
 
-- Uruchamiać skrypt strategii na zaimportowanym zbiorze bez wywołań do MT5.
-- Dodać symulowane pozycje BUY/SELL, zamknięcia i jawne rozliczanie Bid/Ask.
-- Zapisywać wersję skryptu, konfigurację, hash danych oraz wszystkie zdarzenia przebiegu.
+- [ ] Dodać pobieranie zakresu rzeczywistych ticków dla wybranego symbolu przez MT5 `copy_ticks_range`.
+- [ ] Zachować `time_msc`, kolejność rekordów, Bid, Ask, Last, wolumen i flagi; nie tworzyć ticków z OHLC.
+- [ ] Zapisać dane i manifest symbolu/brokera w lokalnej bazie SQLite `.crt-replay`.
+- [ ] Dodać jawny postęp, anulowanie i błędy importu; brak danych lub przerwany zakres nie może być przedstawiony jako pełny.
+- [ ] Udostępnić listę archiwów z instrumentem, brokerem, zakresem dat, liczbą ticków i stanem kompletności.
+- [ ] Kryterium ukończenia: zapisane archiwum otwiera się bez aktywnego MT5 i zachowuje oryginalną kolejność ticków.
 
-### 3. Odtwarzacz na wykresie
+### Etap 3 — Python i symulator
 
-- Dodać przycisk `FX REPLAY` do głównego paska CRT i dedykowany widok odtwarzacza w tle CRT.
-- Wyświetlać świece agregowane z ticków archiwum, zachowując rzeczywisty strumień ticków jako wejście silnika.
-- Dodać Start/Pauza, krokowanie, regulację szybkości i przewijanie w obie strony.
-- Rysować Entry/Exit oraz wynik w pipsach/punktach i podsumowanie transakcji.
+- [ ] Zdefiniować wersjonowany interfejs skryptu: `on_start`, `on_tick`, `on_stop` oraz konfigurację parametrów.
+- [ ] Uruchamiać skrypt w osobnym lokalnym procesie bez połączenia z MT5.
+- [ ] Udostępnić wyłącznie symulowane operacje: BUY/SELL, BUY LIMIT/SELL LIMIT, SL/TP, zamknięcie i częściowe zamknięcie.
+- [ ] Rozliczać BUY po Ask i wyjście po Bid; SELL po Bid i wyjście po Ask.
+- [ ] Zapisać kod/wersję API, parametry, hash archiwum, koszty i zdarzenia w raporcie uruchomienia.
+- [ ] Kryterium ukończenia: to samo archiwum, skrypt i parametry dają ten sam dziennik transakcji przy ponownym uruchomieniu.
 
-### 4. Wydajność i domknięcie
+### Etap 4 — przycisk i widok FX Replay
 
-- Zmierzyć import i replay na reprezentatywnych zbiorach przed optymalizacją.
-- Dodać indeks czasu/partycje danych i checkpointy tylko tam, gdzie pomiary wykażą potrzebę.
-- Zweryfikować zgodność wyników po ponownym uruchomieniu tego samego skryptu na tych samych danych.
+- [ ] Dodać przycisk `FX REPLAY` do głównego paska CRT; ma być dostępny również w trybie offline.
+- [ ] Otwierać dedykowany widok z wyborem archiwum, skryptu Python i parametrów symulacji.
+- [ ] Zaprojektować tło w stylu CRT: ciemny granat, niebieska poświata monitora, delikatna siatka i subtelne linie ekranu.
+- [ ] Dodać wykres archiwum, oś czasu, Start/Pauza, krok tick/bar, prędkość oraz przewijanie w przód i w tył.
+- [ ] Rysować znaczniki Entry/Exit, wynik w pipsach/punktach oraz dziennik i podsumowanie transakcji.
+- [ ] Nie wyświetlać w tym widoku panelu egzekucji DEMO/live; wszystkie operacje są symulowane.
+- [ ] Kryterium ukończenia: można otworzyć lokalne archiwum, uruchomić strategię i płynnie obejrzeć zapisany przebieg w obu kierunkach.
+
+### Etap 5 — wydajność i wydanie
+
+- [ ] Zmierzyć czas importu i przetwarzania na rzeczywistych zbiorach XAUUSD i BTCUSD.
+- [ ] Ustalić limity zakresu na podstawie pomiarów; większy zakres dzielić jawnie, nigdy nie ucinać bez informacji.
+- [ ] Dodać indeksy, porcjowanie i checkpointy tylko tam, gdzie pomiary wykażą potrzebę.
+- [ ] Zbudować aplikację i sprawdzić ręcznie start offline, import MT5, replay i powrót do widoku live.
+- [ ] Przed każdym wydaniem zwiększyć wersję zgodnie z repozytoryjną zasadą pięciu plików i sprawdzić publikację podpisanego instalatora/updatera.
+- [ ] Kryterium ukończenia: raport odtwarza założenia i źródło danych, a updater wskazuje właściwy instalator.
 
 ## Kolejność wdrożenia i granice
 
@@ -85,6 +112,6 @@ Najpierw powstaje kompletna pionowa ścieżka dla jednego symbolu: import → lo
 
 Zakres V1 pozostaje tylko do odczytu względem MT5. Żaden element testera nie może wywołać `order_send`, otworzyć pozycji DEMO ani rzeczywistej ani zmienić ustawień konta.
 
-## Pierwszy zakres implementacji
+## Granice V1
 
-Najpierw realizujemy import rzeczywistych ticków dla jednego instrumentu i zakresu dat, lokalny zapis SQLite `.crt-replay` oraz walidację manifestu. Potem powstaje runner Pythona z kontraktem strategii i symulacją zleceń, a następnie integracja odtwarzacza z wykresem. Limit wielkości pojedynczego importu ustalimy na podstawie pomiarów MT5 na XAUUSD i BTCUSD; przekroczenie limitu dzielimy na jawne porcje zamiast obcinać dane po cichu.
+Najpierw kończymy pojedynczą ścieżkę dla jednego symbolu: start offline → import ticków → skrypt Python → symulowane transakcje → odtwarzanie → raport. Dopiero potem rozszerzamy tester o wiele symboli, optymalizację parametrów, portfel strategii i bardziej zaawansowane modele kosztów. Zakresy danych dzielimy jawnie; nigdy nie obcinamy historii po cichu.
