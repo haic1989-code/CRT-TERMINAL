@@ -1,6 +1,6 @@
 # CRT Terminal — lokalny odtwarzacz i tester strategii
 
-**Stan:** rozpoczęto etap 1 — start offline\
+**Stan:** etap 1 wdrożony; etap 2 ma API, lokalne archiwum SQLite i ekran importu; rzeczywisty odbiór ticków MT5 pozostaje do wykonania\
 **Zakres V1:** jeden instrument, rzeczywiste ticki MT5, skrypty strategii w Pythonie, wyłącznie symulowane zlecenia.
 
 ## Postęp
@@ -71,12 +71,13 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 
 ### Etap 2 — import i archiwum ticków
 
-- [ ] Dodać pobieranie zakresu rzeczywistych ticków dla wybranego symbolu przez MT5 `copy_ticks_range`.
-- [ ] Zachować `time_msc`, kolejność rekordów, Bid, Ask, Last, wolumen i flagi; nie tworzyć ticków z OHLC.
-- [ ] Zapisać dane i manifest symbolu/brokera w lokalnej bazie SQLite `.crt-replay`.
-- [ ] Dodać jawny postęp, anulowanie i błędy importu; brak danych lub przerwany zakres nie może być przedstawiony jako pełny.
-- [ ] Udostępnić listę archiwów z instrumentem, brokerem, zakresem dat, liczbą ticków i stanem kompletności.
-- [ ] Kryterium ukończenia: zapisane archiwum otwiera się bez aktywnego MT5 i zachowuje oryginalną kolejność ticków.
+- [x] Dodać pobieranie zakresu rzeczywistych ticków dla wybranego symbolu przez MT5 `copy_ticks_range`.
+- [x] Zachować `time_msc`, kolejność rekordów, Bid, Ask, Last, wolumen i flagi; nie tworzyć ticków z OHLC.
+- [x] Zapisać dane i manifest symbolu/brokera w lokalnej bazie SQLite `.crt-replay`.
+- [x] Dodać postęp, anulowanie i błędy importu; przerwany zakres jest oznaczany jako niekompletny.
+- [x] Udostępnić API listy archiwów i stronicowanego odczytu ticków wraz ze stanem kompletności.
+- [x] Dodać widok FX Replay dla wyboru symbolu i zakresu, importu oraz przeglądania archiwów.
+- [ ] Kryterium ukończenia: po rzeczywistym imporcie archiwum otwiera się bez aktywnego MT5 i zachowuje oryginalną kolejność ticków.
 
 ### Etap 3 — Python i symulator
 
@@ -89,7 +90,7 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 
 ### Etap 4 — przycisk i widok FX Replay
 
-- [ ] Dodać przycisk `FX REPLAY` do głównego paska CRT; ma być dostępny również w trybie offline.
+- [x] Dodać przycisk `FX REPLAY` do głównego paska CRT; ma być dostępny również w trybie offline.
 - [ ] Otwierać dedykowany widok z wyborem archiwum, skryptu Python i parametrów symulacji.
 - [ ] Zaprojektować tło w stylu CRT: ciemny granat, niebieska poświata monitora, delikatna siatka i subtelne linie ekranu.
 - [ ] Dodać wykres archiwum, oś czasu, Start/Pauza, krok tick/bar, prędkość oraz przewijanie w przód i w tył.

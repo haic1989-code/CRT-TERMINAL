@@ -7,6 +7,7 @@ import './matrix-terminal.css'
 import './matrix-crt.css'
 import './matrix-hologram.css'
 import { CrtChartConsole } from './CrtChartConsole'
+import { FxReplayImportPanel } from './FxReplayImportPanel'
 import { MatrixCommandDeck } from './MatrixCommandDeck'
 import { DemoExecutionPanel } from './DemoExecutionPanel'
 import { lunaMessage, lunaRisk } from './lunaMessages'
@@ -157,6 +158,7 @@ export function SmartFlowShell() {
   const [referenceWeeklyBars, setReferenceWeeklyBars] = useState<MarketBar[]>([])
   const [referenceLevelsLoading, setReferenceLevelsLoading] = useState(false)
   const [symbol, setSymbol] = useState<string>(QUICK_SYMBOLS[0])
+  const [fxReplayOpen, setFxReplayOpen] = useState(false)
   const [timeframe, setTimeframe] = useState<ChartTimeframe>('M15')
   const [contextTimeframe, setContextTimeframe] = useState<ContextTimeframe>('M15')
   const [feed, setFeed] = useState<MarketFeedState>({ status: 'connecting', source: 'MT5', mode: 'local', lastTickAt: null })
@@ -763,6 +765,7 @@ export function SmartFlowShell() {
         <div className="sf-chart-toolbar">
           <button className="sf-symbol-trigger" onClick={openInstrumentPrompt} aria-haspopup="dialog" aria-expanded={instrumentPromptOpen}><span className="sf-asset-icon">{symbol === 'XAUUSD' ? 'Au' : symbol === 'BTCUSD' || symbol.toUpperCase().includes('BTC') ? '₿' : '30'}</span>{symbol}<b>⌄</b></button>
           <div className="sf-timeframes">{TIMEFRAMES.map((tf) => <button key={tf} className={timeframe === tf ? 'active' : ''} onClick={() => setTimeframe(tf)}>{tf}</button>)}</div>
+          <button type="button" className="fx-replay-launch" onClick={() => setFxReplayOpen(true)}>▶ FX REPLAY</button>
           {dragon && <div className="dragon-chart-navigation" aria-label="Sterowanie wykresem">
             <button type="button" className={autoScrollEnabled ? 'is-active' : ''} aria-label="Automatyczne przewijanie" aria-pressed={autoScrollEnabled} onClick={() => setAutoScrollEnabled(value => !value)} title="Śledź najnowszą cenę">↧ <span>AUTO</span></button>
             <button type="button" className={chartShiftEnabled ? 'is-active' : ''} aria-label="Przesunięcie wykresu" aria-pressed={chartShiftEnabled} onClick={() => setChartShiftEnabled(value => !value)} title="Margines prawej strony">↤ <span>PRZESUŃ</span></button>
@@ -853,6 +856,7 @@ export function SmartFlowShell() {
     </section>
 
     {toast && <div className="sf-toast">{toast}</div>}
+    {fxReplayOpen && <FxReplayImportPanel initialSymbol={feed.symbol || symbol} onClose={() => setFxReplayOpen(false)} />}
   </main>
 }
 

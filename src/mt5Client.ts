@@ -117,11 +117,15 @@ type LocalFetchInit = RequestInit & {
 }
 
 async function localFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return localRequest<T>(path, { method: 'GET', cache: 'no-store', signal })
+}
+
+async function localRequest<T>(path: string, request: RequestInit = {}): Promise<T> {
   const init: LocalFetchInit = {
     method: 'GET',
     cache: 'no-store',
-    signal,
     targetAddressSpace: 'loopback',
+    ...request,
   }
 
   let response: Response
@@ -202,6 +206,18 @@ function validateResponse(path: string, payload: unknown): void {
   if (endpoint === '/v1/context-bars' || endpoint === '/v1/fx-bars') {
     if (!object(payload.values) || !Object.values(payload.values).every(value => Array.isArray(value) && value.every(validBar))) return fail()
   }
+  if (endpoint.startsWith('/v1/replay/')) {
+    if (endpoint === '/v1/replay/archives' && (!Array.isArray(payload.values) || typeof payload.database !== 'string')) return fail()
+    if (endpoint.endsWith('/ticks')) {
+      if (!numbers(payload, ['offset', 'limit', 'total']) || !Array.isArray(payload.values)) return fail()
+      const validTick = (value: unknown) => object(value)
+        && numbers(value, ['time_msc', 'bid', 'ask', 'last', 'volume', 'volume_real', 'flags'])
+        && Number(value.time_msc) > 0
+        && Math.min(Number(value.bid), Number(value.ask), Number(value.last), Number(value.volume), Number(value.volume_real)) >= 0
+        && !(Number(value.bid) > 0 && Number(value.ask) > 0 && Number(value.ask) < Number(value.bid))
+      if (!payload.values.every(validTick)) return fail()
+    }
+  }
 }
 
 export function fetchMt5Bars(
@@ -248,4 +264,73 @@ export function fetchMt5Health(signal?: AbortSignal) {
     symbol: string
     account: Mt5Account
   }>('/v1/health', signal)
+}
+
+export type ReplayArchive = {
+  id: string
+  status: 'importing' | 'complete' | 'failed' | 'cancelled' | 'interrupted'
+  requested_symbol: string
+  symbol: string
+  broker: string
+  server: string
+  from_ms: number
+  to_ms: number
+  tick_count: number
+  sha256: string | null
+  manifest: Record<string, unknown>
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ReplayImportJob = {
+  id: string
+  archive_id: string
+  status: 'starting' | 'importing' | 'complete' | 'failed' | 'cancelled'
+  symbol: string
+  from_ms: number
+  to_ms: number
+  completed_through_ms: number
+  tick_count: number
+  progress: number
+  error: string | null
+  archive: ReplayArchive | null
+}
+
+export type ReplayTick = Pick<Mt5Tick, 'time_msc' | 'bid' | 'ask' | 'last' | 'volume' | 'volume_real' | 'flags'>
+
+export function startReplayImport(request: { symbol: string; fromMs: number; toMs: number }, signal?: AbortSignal) {
+  return localRequest<ReplayImportJob>('/v1/replay/imports', {
+    method: 'POST',
+    cache: 'no-store',
+    signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol: request.symbol, from_ms: request.fromMs, to_ms: request.toMs }),
+  })
+}
+
+export function fetchReplayImport(jobId: string, signal?: AbortSignal) {
+  return localFetch<ReplayImportJob>(`/v1/replay/imports/${encodeURIComponent(jobId)}`, signal)
+}
+
+export function cancelReplayImport(jobId: string, signal?: AbortSignal) {
+  return localRequest<ReplayImportJob>(`/v1/replay/imports/${encodeURIComponent(jobId)}/cancel`, {
+    method: 'POST', cache: 'no-store', signal,
+  })
+}
+
+export function fetchReplayArchives(signal?: AbortSignal) {
+  return localFetch<{ database: string; values: ReplayArchive[] }>('/v1/replay/archives', signal)
+}
+
+export function fetchReplayArchive(archiveId: string, signal?: AbortSignal) {
+  return localFetch<ReplayArchive>(`/v1/replay/archives/${encodeURIComponent(archiveId)}`, signal)
+}
+
+export function fetchReplayTicks(archiveId: string, offset = 0, limit = 10_000, signal?: AbortSignal) {
+  const query = new URLSearchParams({ offset: String(offset), limit: String(limit) })
+  return localFetch<{ offset: number; limit: number; total: number; values: ReplayTick[] }>(
+    `/v1/replay/archives/${encodeURIComponent(archiveId)}/ticks?${query.toString()}`,
+    signal,
+  )
 }

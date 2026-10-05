@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from execution import ExecutionService
+import replay_store
 
 HOST = "127.0.0.1"
 PORT = int(os.getenv("CRT_TERMINAL_MT5_PORT", os.getenv("SMARTFLOW_MT5_PORT", "8765")))
@@ -105,6 +106,19 @@ _shutdown_token = secrets.token_urlsafe(32)
 _instance = secrets.token_hex(16)
 _execution_token = secrets.token_urlsafe(32) if OWNER != "manual" else ""
 _server: Any = None
+
+_configured_data_dir = os.getenv("CRT_TERMINAL_DATA_DIR", "").strip()
+if _configured_data_dir:
+    _replay_data_dir = Path(_configured_data_dir)
+elif os.getenv("LOCALAPPDATA"):
+    _replay_data_dir = Path(os.environ["LOCALAPPDATA"]) / "CRT Terminal"
+else:
+    _replay_data_dir = Path.home() / ".local" / "share" / "CRT Terminal"
+replay_store.initialize(_replay_data_dir)
+
+_replay_jobs_lock = threading.RLock()
+_replay_jobs: dict[str, dict[str, Any]] = {}
+_active_replay_job: str | None = None
 
 app = FastAPI(
     title="CRT Terminal MT5 Local Bridge",
@@ -732,6 +746,189 @@ def context_bars(requested: str = Query(default="XAUUSD", alias="symbol")):
                 raise HTTPException(status_code=503, detail={"error": "CONTEXT_BARS_UNAVAILABLE", "timeframe": name, "last_error": _last_error()})
             values[name] = sorted([{"time": int(r["time"]), "open": float(r["open"]), "high": float(r["high"]), "low": float(r["low"]), "close": float(r["close"]), "tick_volume": int(r["tick_volume"]), "real_volume": int(r["real_volume"])} for r in rates], key=lambda row: row["time"])
     return {"symbol": resolved, "values": values}
+
+
+def _replay_job_payload(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": job["id"],
+        "archive_id": job["archive_id"],
+        "status": job["status"],
+        "symbol": job["symbol"],
+        "from_ms": job["from_ms"],
+        "to_ms": job["to_ms"],
+        "completed_through_ms": job["completed_through_ms"],
+        "tick_count": job["tick_count"],
+        "progress": job["progress"],
+        "error": job["error"],
+        "archive": replay_store.get_archive(job["archive_id"]),
+    }
+
+
+def _run_replay_import(job_id: str) -> None:
+    global _active_replay_job
+    with _replay_jobs_lock:
+        job = _replay_jobs[job_id]
+    archive_id = job["archive_id"]
+    cursor_ms = job["from_ms"]
+    try:
+        # Short, disjoint one-hour requests bound memory while retaining the
+        # broker's original millisecond timestamps and tick order.
+        chunk_ms = 60 * 60 * 1000
+        while cursor_ms <= job["to_ms"]:
+            if job["cancel"].is_set() or _closing.is_set():
+                replay_store.set_archive_state(archive_id, "cancelled", "Import anulowany przed końcem zakresu.")
+                with _replay_jobs_lock:
+                    job.update(status="cancelled", error="Import anulowany.", progress=0)
+                return
+            chunk_to_ms = min(cursor_ms + chunk_ms - 1, job["to_ms"])
+            date_from = datetime.fromtimestamp(cursor_ms / 1000, timezone.utc)
+            date_to = datetime.fromtimestamp(chunk_to_ms / 1000, timezone.utc)
+            with _lock:
+                _ensure_connected()
+                rates = _required(
+                    mt5.copy_ticks_range(job["symbol"], date_from, date_to, mt5.COPY_TICKS_ALL),
+                    "REPLAY_TICKS_UNAVAILABLE",
+                )
+            added, latest_ms = replay_store.append_ticks(archive_id, rates, cursor_ms, chunk_to_ms)
+            with _replay_jobs_lock:
+                job["tick_count"] += added
+                job["completed_through_ms"] = chunk_to_ms
+                span = max(1, job["to_ms"] - job["from_ms"])
+                job["progress"] = min(99, int((chunk_to_ms - job["from_ms"]) * 100 / span))
+                job["last_tick_ms"] = latest_ms or job.get("last_tick_ms")
+            cursor_ms = chunk_to_ms + 1
+
+        archive = replay_store.finish_archive(archive_id)
+        with _replay_jobs_lock:
+            job.update(status="complete", progress=100, archive=archive, error=None)
+    except Exception as error:
+        try:
+            replay_store.set_archive_state(archive_id, "failed", str(error))
+        except Exception:
+            pass
+        with _replay_jobs_lock:
+            job.update(status="failed", error=str(error)[:1000], progress=0)
+    finally:
+        with _replay_jobs_lock:
+            if _active_replay_job == job_id:
+                _active_replay_job = None
+
+
+@app.post("/v1/replay/imports", status_code=202)
+def replay_import_start(request: Request, body: dict[str, Any]):
+    global _active_replay_job
+    _authorize_runtime(request)
+    requested_symbol = body.get("symbol")
+    from_ms = body.get("from_ms")
+    to_ms = body.get("to_ms")
+    if not isinstance(requested_symbol, str) or not requested_symbol.strip() or len(requested_symbol) > 64:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_SYMBOL_REQUIRED"})
+    if isinstance(from_ms, bool) or not isinstance(from_ms, int) or isinstance(to_ms, bool) or not isinstance(to_ms, int):
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_RANGE_MUST_USE_UTC_MILLISECONDS"})
+    now_ms = int(time.time() * 1000)
+    if from_ms <= 0 or to_ms <= from_ms or to_ms > now_ms + 60_000:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_RANGE_INVALID", "hint": "Podaj poprawny zakres czasu UTC; data końcowa nie może być w przyszłości."})
+
+    job_id = str(uuid.uuid4())
+    with _replay_jobs_lock:
+        if _active_replay_job:
+            active = _replay_jobs.get(_active_replay_job)
+            if active and active["status"] in {"starting", "importing"}:
+                raise HTTPException(status_code=409, detail={"error": "REPLAY_IMPORT_ALREADY_RUNNING", "job_id": _active_replay_job})
+        _active_replay_job = job_id
+        _replay_jobs[job_id] = {"id": job_id, "status": "starting"}
+    try:
+        with _lock:
+            _ensure_connected()
+            symbol = _resolve_requested_symbol(requested_symbol.strip())
+            account = mt5.account_info()
+            terminal = mt5.terminal_info()
+            symbol_info = _symbol_payload(symbol)
+            if account is None or terminal is None:
+                raise HTTPException(status_code=503, detail={"error": "MT5_METADATA_UNAVAILABLE", "last_error": _last_error()})
+
+        archive_id = replay_store.create_archive(
+            requested_symbol=requested_symbol.strip(),
+            symbol=symbol,
+            broker=str(getattr(terminal, "company", "") or ""),
+            server=str(getattr(account, "server", "") or ""),
+            from_ms=from_ms,
+            to_ms=to_ms,
+            symbol_info=symbol_info,
+        )
+        job = {
+            "id": job_id,
+            "archive_id": archive_id,
+            "status": "importing",
+            "symbol": symbol,
+            "from_ms": from_ms,
+            "to_ms": to_ms,
+            "completed_through_ms": from_ms,
+            "tick_count": 0,
+            "progress": 0,
+            "error": None,
+            "cancel": threading.Event(),
+        }
+        with _replay_jobs_lock:
+            _replay_jobs[job_id] = job
+    except Exception:
+        with _replay_jobs_lock:
+            _replay_jobs.pop(job_id, None)
+            if _active_replay_job == job_id:
+                _active_replay_job = None
+        raise
+    thread = threading.Thread(target=_run_replay_import, args=(job_id,), name=f"crt-replay-{job_id[:8]}", daemon=True)
+    thread.start()
+    return _replay_job_payload(job)
+
+
+@app.get("/v1/replay/imports/{job_id}")
+def replay_import_status(job_id: str):
+    with _replay_jobs_lock:
+        job = _replay_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail={"error": "REPLAY_IMPORT_NOT_FOUND"})
+        return _replay_job_payload(job)
+
+
+@app.post("/v1/replay/imports/{job_id}/cancel")
+def replay_import_cancel(request: Request, job_id: str):
+    _authorize_runtime(request)
+    with _replay_jobs_lock:
+        job = _replay_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail={"error": "REPLAY_IMPORT_NOT_FOUND"})
+        if job["status"] == "importing":
+            job["cancel"].set()
+        return _replay_job_payload(job)
+
+
+@app.get("/v1/replay/archives")
+def replay_archives():
+    return {"values": replay_store.list_archives(), "database": "archives.crt-replay"}
+
+
+@app.get("/v1/replay/archives/{archive_id}")
+def replay_archive(archive_id: str):
+    archive = replay_store.get_archive(archive_id)
+    if archive is None:
+        raise HTTPException(status_code=404, detail={"error": "REPLAY_ARCHIVE_NOT_FOUND"})
+    return archive
+
+
+@app.get("/v1/replay/archives/{archive_id}/ticks")
+def replay_archive_ticks(
+    archive_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=10_000, ge=1, le=50_000),
+):
+    try:
+        page = replay_store.get_archive_ticks(archive_id, offset, limit)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail={"error": "REPLAY_ARCHIVE_INCOMPLETE", "hint": str(error)}) from error
+    if page is None:
+        raise HTTPException(status_code=404, detail={"error": "REPLAY_ARCHIVE_NOT_FOUND"})
+    return page
 
 
 @app.get("/v1/calculate")

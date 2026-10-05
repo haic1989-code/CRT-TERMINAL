@@ -105,6 +105,7 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<BridgeBootstrap, String> {
         .arg(runtime_root)
         .env("CRT_TERMINAL_MT5_PORT", "0")
         .env("CRT_TERMINAL_BRIDGE_OWNER", &owner)
+        .env("CRT_TERMINAL_DATA_DIR", &app_data_dir)
         .env("CRT_TERMINAL_BRIDGE_ENDPOINT_FILE", &endpoint_path)
         // Packaged GUI apps can inherit a working directory that PowerShell
         // cannot map to a filesystem drive. The bridge script uses absolute

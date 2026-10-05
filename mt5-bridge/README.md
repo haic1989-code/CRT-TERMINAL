@@ -23,6 +23,7 @@ CRT Terminal. Błędy odczytu portfela nie są traktowane jak brak pozycji.
 - brokerowe wyliczenie margin/profit (bez złożenia zlecenia),
 - godziny sesji kwotowań i handlu dla symbolu z natywnego API MQL5,
 - do 100000 barów na żądanie, ograniczone historią dostępną w terminalu MT5.
+- import rzeczywistych ticków do lokalnego archiwum FX Replay, niezależnie od danych OHLC.
 
 Ręcznie uruchomiony bridge ma wyłączoną egzekucję. Własna sesja desktopowa
 udostępnia `/v1/execution/status`, `/prepare`, `/execute` i `/requests/{id}`
@@ -42,6 +43,27 @@ innych polityk filling. Zasady i ograniczenia opisano w głównym README.
 - `GET /v1/fx-bars?timeframe=H1` — pary do Currency Strength,
 - `GET /v1/calculate?action=margin|profit&...` — obliczenia MT5, bez efektów ubocznych,
 - `/v1/bars` i `/v1/snapshot` przyjmują instrument `symbol`; odpowiedź tick zawiera `observed_at`, wiek i stan freshness.
+
+## FX Replay — import ticków
+
+Archiwa są zapisywane w katalogu danych aplikacji: `FXReplay/archives.crt-replay`.
+To baza SQLite poza katalogiem instalacji; pozostaje na dysku po aktualizacji CRT.
+Desktop przekazuje mostowi prywatną ścieżkę katalogu danych. Ręczny bridge używa
+`%LOCALAPPDATA%/CRT Terminal/FXReplay` (albo `~/.local/share/CRT Terminal` poza Windows).
+
+- `POST /v1/replay/imports` przyjmuje dokładny lub aliasowy symbol oraz `from_ms` i
+  `to_ms` jako znaczniki UTC w milisekundach. Operacja wymaga aktywnego MT5 i
+  dokładnego dozwolonego originu CRT.
+- Ticki są pobierane przez `copy_ticks_range` w godzinnych porcjach i zapisywane
+  z oryginalnym czasem, Bid, Ask, Last, wolumenem i flagami. API nie generuje ticków
+  z OHLC.
+- `GET /v1/replay/imports/{id}` zwraca postęp; `POST .../{id}/cancel` anuluje import.
+- `GET /v1/replay/archives` pokazuje manifesty i stan importu. Tylko stan `complete`
+  może być czytany przez `GET /v1/replay/archives/{id}/ticks`; endpoint zwraca strony
+  po maksymalnie 50000 rekordów w oryginalnej kolejności.
+- `failed`, `cancelled` i `interrupted` pozostają jawnie niekompletne. Restart
+  aplikacji oznacza niedokończony import jako `interrupted`; takie dane nie są
+  dostępne dla odtwarzacza.
 
 ## Uruchomienie — Windows
 

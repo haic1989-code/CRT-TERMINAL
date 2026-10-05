@@ -1,8 +1,9 @@
-# CRT Terminal 0.1.26
+# CRT Terminal 0.1.27
 
-- Ekran startowy pozwala jawnie uruchomić CRT bez dostępnego mostu MT5.
-- Terminal nie oznacza wykresu ani połączenia MT5 jako gotowych, gdy dane nie są dostępne.
-- Próby połączenia z MT5 są ponawiane w tle po wybraniu trybu offline.
-- Uruchomienie offline przygotowuje bazę pod lokalny FX Replay; import historii i dane na żywo wymagają dostępnego MT5.
+- FX Replay importuje ticki z MT5 przez `copy_ticks_range` w godzinnych porcjach.
+- Archiwum SQLite zachowuje brokerowy czas w milisekundach, kolejność, Bid/Ask/Last, wolumen i flagi oraz manifest z symbolem i specyfikacją.
+- Niekompletny, anulowany lub przerwany import jest oznaczany osobno i nie może zostać użyty do odtwarzania.
+- Dostępne są odczyt postępu, anulowanie importu, lista archiwów i stronicowany odczyt ticków; API nie składa zleceń.
+- Przycisk `FX REPLAY` otwiera ekran CRT do ustawienia symbolu i zakresu oraz podglądu statusu archiwów.
 
 Aktualizacje nadal wymagają jawnego kliknięcia w terminalu.
