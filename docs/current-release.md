@@ -1,4 +1,9 @@
-# CRT Terminal 0.1.32
+# CRT Terminal 0.1.33
+
+- FX Replay otrzymał zielono-czarną oprawę CRT spójną z głównym terminalem.
+- Okno odtwarzania zajmuje centralną część widoku; import, archiwa i skrypty strategii są w bocznym panelu.
+- Pusty ekran odtwarzacza pokazuje ramkę monitora i status oczekiwania, także przed importem pierwszego archiwum.
+- Układ dostosowuje się do węższych ekranów, przenosząc odtwarzacz nad narzędzia.
 
 - FX Replay automatycznie przechodzi między stronami ticków podczas odtwarzania w przód i w tył; ręczne sterowanie porcjami pozostaje dostępne.
 

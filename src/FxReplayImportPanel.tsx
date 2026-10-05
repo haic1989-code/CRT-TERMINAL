@@ -410,7 +410,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
           </div>}
           {events.length > 0 && <div className="fx-replay-events"><div className="fx-replay-section-title"><span>04</span> DZIENNIK ZDARZEŃ <small>PIERWSZE {events.length}</small></div><div className="fx-replay-event-list">{events.map(event => <div key={event.sequence} className={'fx-replay-event fx-replay-event--' + event.kind}><time>{showTime(event.time_msc)}</time><b>{event.kind.toUpperCase()}</b><span>{String(event.side || event.reason || '')}</span><span>{Number(event.price || 0).toLocaleString('pl-PL')}</span>{event.points !== undefined && <strong>{Number(event.points).toFixed(1)} pkt</strong>}</div>)}</div></div>}
         </section>
-        {ticks.length > 0 && <section className="fx-replay-player" aria-label="Odtwarzacz ticków FX Replay">
+        {ticks.length > 0 ? <section className="fx-replay-player" aria-label="Odtwarzacz ticków FX Replay">
           <div className="fx-replay-section-title"><span>05</span> ODTWARZACZ TICKÓW <small>{selectedArchive?.symbol || 'ARCHIWUM'} · {cursorIndex + 1} / {ticks.length}</small></div>
           <div className="fx-replay-player-readout"><strong>Bid {ticks[cursorIndex]?.bid.toLocaleString('pl-PL')}</strong><strong>Ask {ticks[cursorIndex]?.ask.toLocaleString('pl-PL')}</strong><span>{showTime(ticks[cursorIndex]?.time_msc || 0)}. {String(ticks[cursorIndex]?.time_msc || 0).slice(-3)}</span><label>ŚWIECA<select value={chartInterval} onChange={event => setChartInterval(event.target.value)}>{Object.keys(replayIntervals).map(value => <option key={value}>{value}</option>)}</select></label></div>
           <ReplayPriceChart ticks={ticks} cursor={cursorIndex} events={events} intervalMs={replayIntervals[chartInterval]} />
@@ -427,6 +427,10 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <label>TEMPO<select value={playSpeed} onChange={event => setPlaySpeed(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={5}>5×</option><option value={20}>20×</option></select></label>
           </div>
           <p className="fx-replay-note">Luna › Odtwarzanie płynnie przechodzi między porcjami po 10 000 ticków. Możesz też wybrać porcję ręcznie.</p>
+        </section> : <section className="fx-replay-player fx-replay-player--empty" aria-label="Okno wizualnego odtwarzania FX Replay">
+          <div className="fx-replay-section-title"><span>00</span> OKNO ODTWARZANIA <small>CRT // FX REPLAY</small></div>
+          <div className="fx-replay-empty-monitor"><div className="fx-replay-empty-monitor__frame"><span>TRYB OFFLINE // GOTOWY</span><strong>WYBIERZ ARCHIWUM</strong><p>Otwórz zapisane ticki z panelu po prawej, aby rozpocząć wizualną powtórkę.</p><i aria-hidden="true">▌</i></div></div>
+          <div className="fx-replay-empty-readout"><span>BID <b>—</b></span><span>ASK <b>—</b></span><span>UTC <b>—</b></span><span>POZYCJA <b>OCZEKUJE</b></span></div>
         </section>}
       </div>
     </section>
