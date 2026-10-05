@@ -1,6 +1,6 @@
 [package]
 name = "crt-terminal"
-version = "0.1.35"
+version = "0.1.36"
 description = "CRT Terminal desktop app"
 authors = ["CRT Terminal"]
 edition = "2021"

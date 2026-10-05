@@ -27,6 +27,10 @@ TIMEFRAMES_MS = {
 }
 
 
+class ReplayOrderRejected(ValueError):
+    """A broker-style simulated order rejection that should not abort a run."""
+
+
 def _positive(value: Any, label: str) -> float:
     if isinstance(value, bool):
         raise ValueError(f"{label} musi być dodatnią liczbą.")
@@ -71,6 +75,12 @@ class ReplayContext:
             raise ValueError("timeframe musi być jednym z: M1, M5, M15, M30, H1, H4, D1.")
         self.timeframe_ms = TIMEFRAMES_MS[self.timeframe]
         self.initial_balance = _positive(params.get("initial_balance", DEFAULT_INITIAL_BALANCE), "Kapitał początkowy")
+        leverage_value = _positive(params.get("leverage", 100), "Dźwignia")
+        if not leverage_value.is_integer():
+            raise ValueError("Dźwignia musi być liczbą całkowitą.")
+        self.leverage = int(leverage_value)
+        if self.leverage > 100_000:
+            raise ValueError("Dźwignia musi mieścić się w zakresie 1–100000.")
         self.risk_fraction = _positive(params.get("risk_fraction", DEFAULT_RISK_FRACTION), "Ryzyko na transakcję")
         if self.risk_fraction > 1:
             raise ValueError("risk_fraction musi być ułamkiem od 0 do 1, np. 0.005 dla 0,5%.")
@@ -81,6 +91,16 @@ class ReplayContext:
         if not math.isfinite(self.slippage_points) or self.slippage_points < 0:
             raise ValueError("slippage_points musi być nieujemne.")
         self.account_currency = str(params.get("account_currency") or "")
+        calibration = params.get("margin_calibration") or {}
+        self.margin_calibration = calibration if isinstance(calibration, dict) else {}
+        self.margin_reference_leverage = int(self.margin_calibration.get("reference_leverage") or 0)
+        self.trade_calc_mode = int(self.margin_calibration.get("trade_calc_mode", spec.get("trade_calc_mode", -1)))
+        self.margin_model_available = all(
+            isinstance(self.margin_calibration.get(f"{side}_per_lot"), (int, float))
+            and math.isfinite(float(self.margin_calibration[f"{side}_per_lot"]))
+            and float(self.margin_calibration[f"{side}_per_lot"]) > 0
+            for side in ("buy", "sell")
+        )
         self.money_pnl_available = bool(self.account_currency) and tick_size > 0 and value_profit > 0 and value_loss > 0
         self.now_ms = 0
         self.bid = 0.0
@@ -108,6 +128,10 @@ class ReplayContext:
         self.commission_paid = 0.0
         self.peak_equity_estimate = self.initial_balance
         self.max_drawdown_estimate = 0.0
+        self.peak_margin_used_estimate = 0.0
+        self.min_free_margin_estimate: float | None = None
+        self.min_margin_level_estimate: float | None = None
+        self.rejected_orders = 0
         self._next_id = 1
 
     def _id(self) -> str:
@@ -161,6 +185,47 @@ class ReplayContext:
             return
         self.peak_equity_estimate = max(self.peak_equity_estimate, equity)
         self.max_drawdown_estimate = max(self.max_drawdown_estimate, self.peak_equity_estimate - equity)
+        used_margin = self.margin_used_estimate
+        if used_margin is not None:
+            free_margin = equity - used_margin
+            self.peak_margin_used_estimate = max(self.peak_margin_used_estimate, used_margin)
+            self.min_free_margin_estimate = free_margin if self.min_free_margin_estimate is None else min(self.min_free_margin_estimate, free_margin)
+            if used_margin > 0:
+                level = equity / used_margin * 100
+                self.min_margin_level_estimate = level if self.min_margin_level_estimate is None else min(self.min_margin_level_estimate, level)
+
+    def _margin_per_lot(self, side: str) -> float | None:
+        if not self.margin_model_available:
+            return None
+        value = float(self.margin_calibration[f"{side}_per_lot"])
+        # MT5 leverage scales these two common calculation modes. Other modes
+        # retain the broker-calibrated requirement and are reported as estimates.
+        if self.trade_calc_mode in (0, 5) and self.margin_reference_leverage > 0:
+            value *= self.margin_reference_leverage / self.leverage
+        return value
+
+    @property
+    def margin_used_estimate(self) -> float | None:
+        if not self.margin_model_available:
+            return None
+        total = sum(float(position["volume"]) * (self._margin_per_lot(position["side"]) or 0) for position in self.positions)
+        total += sum(float(order["volume"]) * (self._margin_per_lot(order["side"]) or 0) for order in self.pending)
+        return total
+
+    def _check_margin(self, side: str, volume: float, order_type: str) -> None:
+        per_lot = self._margin_per_lot(side)
+        if per_lot is None:
+            return
+        equity = self.equity_estimate
+        if equity is None:
+            return
+        required = per_lot * volume
+        used = self.margin_used_estimate or 0.0
+        if required > max(0.0, equity - used) + 1e-9:
+            self.rejected_orders += 1
+            reason = "Wymagany margin przekracza wolny margin w symulowanym rachunku."
+            self._event("order_rejected", side=side, volume=volume, order_type=order_type, required_margin=required, free_margin=max(0.0, equity - used), reason=reason)
+            raise ReplayOrderRejected(reason)
 
     def risk_volume(self, stop_distance: float, risk_fraction: float | None = None) -> float:
         """Return a broker-step-aligned volume for a price-distance stop."""
@@ -325,6 +390,7 @@ class ReplayContext:
         self._close_bar()
 
     def _open(self, side: str, volume: float, price: float, sl: float | None, tp: float | None, order_type: str = "market") -> str:
+        self._check_margin(side, volume, order_type)
         sl = _price(sl, self.spec, "Stop Loss") if sl is not None else None
         tp = _price(tp, self.spec, "Take Profit") if tp is not None else None
         if side == "buy" and ((sl is not None and sl >= price) or (tp is not None and tp <= price)):
@@ -385,6 +451,7 @@ class ReplayContext:
             raise ValueError("SELL LIMIT musi być powyżej aktualnego Bid.")
         order_id = self._id()
         normalized_volume = _volume(volume, self.spec)
+        self._check_margin(side, normalized_volume, f"{side}_limit")
         self.pending.append({"id": order_id, "side": side, "volume": normalized_volume, "price": limit_price, "sl": sl, "tp": tp, "created_at_msc": self.now_ms})
         self._event("pending", order_id=order_id, side=side, volume=volume, price=limit_price, order_type=f"{side}_limit")
         return order_id
@@ -501,10 +568,19 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
     symbol_spec = manifest.get("symbol_info") or {}
     run_params = dict(params)
     run_params["account_currency"] = manifest.get("account_currency", "")
+    run_params["margin_calibration"] = manifest.get("margin_calibration") or {}
+    account_snapshot = manifest.get("account_snapshot") or {}
+    if "initial_balance" not in run_params:
+        run_params["initial_balance"] = account_snapshot.get("balance", DEFAULT_INITIAL_BALANCE)
+    if "leverage" not in run_params:
+        run_params["leverage"] = account_snapshot.get("leverage", 100)
     context = ReplayContext(run_id, archive["symbol"], symbol_spec, run_params)
     module = _load_strategy(strategy_path)
     with contextlib.redirect_stdout(io.StringIO()):
-        module.on_start(context)
+        try:
+            module.on_start(context)
+        except ReplayOrderRejected:
+            pass
     cursor = db.execute(
         "SELECT sequence,time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence",
         (archive_id,),
@@ -524,12 +600,18 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
             for pending in list(context.pending):
                 if pending["side"] == "buy" and context.ask > 0 and context.ask <= pending["price"]:
                     context.pending.remove(pending)
-                    context._open("buy", pending["volume"], context.ask, pending["sl"], pending["tp"], "buy_limit")
-                    context._event("filled", order_id=pending["id"], side="buy", price=context.ask)
+                    try:
+                        context._open("buy", pending["volume"], context.ask, pending["sl"], pending["tp"], "buy_limit")
+                        context._event("filled", order_id=pending["id"], side="buy", price=context.ask)
+                    except ReplayOrderRejected:
+                        pass
                 elif pending["side"] == "sell" and context.bid > 0 and context.bid >= pending["price"]:
                     context.pending.remove(pending)
-                    context._open("sell", pending["volume"], context.bid, pending["sl"], pending["tp"], "sell_limit")
-                    context._event("filled", order_id=pending["id"], side="sell", price=context.bid)
+                    try:
+                        context._open("sell", pending["volume"], context.bid, pending["sl"], pending["tp"], "sell_limit")
+                        context._event("filled", order_id=pending["id"], side="sell", price=context.bid)
+                    except ReplayOrderRejected:
+                        pass
 
             # SL/TP are checked on executable exit-side quotes, before strategy decisions.
             for position in list(context.positions):
@@ -547,7 +629,10 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
                     context._close(position, position["volume"], context._market_price(position["side"], False), reason)
 
             with contextlib.redirect_stdout(io.StringIO()):
-                module.on_tick(context, context.tick)
+                try:
+                    module.on_tick(context, context.tick)
+                except ReplayOrderRejected:
+                    pass
             processed += 1
             if processed % 100_000 == 0:
                 print(json.dumps({"progress": processed}), flush=True)
@@ -556,7 +641,10 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
             raise ValueError("Archiwum nie zawiera ticków.")
         context._finalize_bars()
         with contextlib.redirect_stdout(io.StringIO()):
-            module.on_stop(context)
+            try:
+                module.on_stop(context)
+            except ReplayOrderRejected:
+                pass
         # A replay must not end with an unpriced position or a silently live limit.
         for position in list(context.positions):
             quote = context._market_price(position["side"], False)
@@ -583,6 +671,7 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
             "commission_per_lot_side": context.commission_per_lot_side,
             "slippage_points": context.slippage_points,
             "account_currency": context.account_currency,
+            "leverage": context.leverage,
         },
         "timeframe": context.timeframe,
         "tick_count": processed,
@@ -598,12 +687,20 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
         "open_positions": context.positions,
         "pending_orders": context.pending,
         "initial_balance": context.initial_balance,
+        "leverage": context.leverage,
         "account_currency": context.account_currency or None,
         "realized_pnl_account_currency_estimate": context.realized_pnl_account_currency if context.money_pnl_available else None,
         "unrealized_pnl_account_currency_estimate": context.unrealized_pnl_account_currency if context.money_pnl_available else None,
         "equity_account_currency_estimate": context.equity_estimate,
         "max_drawdown_account_currency_estimate": context.max_drawdown_estimate if context.equity_estimate is not None else None,
         "commission_paid": context.commission_paid,
+        "margin_model_available": context.margin_model_available,
+        "margin_model": "MT5 import-time single-order calibration; estimated static per-lot margin across historical ticks" if context.margin_model_available else "unavailable",
+        "margin_calibration": context.margin_calibration if context.margin_model_available else None,
+        "peak_margin_used_estimate": context.peak_margin_used_estimate if context.margin_model_available else None,
+        "minimum_free_margin_estimate": context.min_free_margin_estimate if context.margin_model_available else None,
+        "minimum_margin_level_percent_estimate": context.min_margin_level_estimate if context.margin_model_available else None,
+        "rejected_orders": context.rejected_orders,
         "costs": {"commission_per_lot_side": context.commission_per_lot_side, "slippage_points": context.slippage_points, "swap": "not modeled"},
         "money_metrics_available": context.money_pnl_available,
         "assumptions": [
@@ -613,6 +710,7 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
             "Świece są agregowane z ticków Bid w koszykach wyrównanych do UTC; nie są pobranymi z MT5 świecami serwerowymi, a dla D1 granica dnia może się różnić od brokera.",
             "Otwarta pozycja jest rozliczana po ostatnim dostępnym kursie wykonywalnym; niewypełnione zlecenia oczekujące są anulowane na końcu archiwum.",
             "Spread pochodzi z Bid/Ask archiwum; poślizg i prowizja są parametrami symulacji, a swap nie jest modelowany.",
+            "Margin jest szacowany na podstawie kalibracji MT5 order_calc_margin pobranej przy imporcie i parametrów symbolu; nie odwzorowuje historycznych zmian dźwigni, kursów przeliczeniowych ani progów stop-out. Dźwignia skaluje tylko tryby Forex i CFD z dźwignią.",
             "Pieniężny wynik i wolumen ryzyka są szacowane z wartości ticka oraz waluty konta zapisanych przy imporcie; nie odtwarzają historycznych zmian przelicznika walutowego ani zmian specyfikacji symbolu.",
             "Wynik punktowy używa punktu brokera z manifestu.",
         ],

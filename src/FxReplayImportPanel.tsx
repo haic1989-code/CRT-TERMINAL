@@ -162,7 +162,9 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const [strategySource, setStrategySource] = useState(sampleStrategy)
   const [selectedArchiveId, setSelectedArchiveId] = useState('')
   const [selectedStrategyId, setSelectedStrategyId] = useState('')
-  const [paramsText, setParamsText] = useState('{\n  "timeframe": "M5",\n  "initial_balance": 10000,\n  "risk_fraction": 0.005,\n  "fast_period": 12,\n  "slow_period": 26,\n  "atr_period": 14,\n  "stop_atr": 2,\n  "target_r": 2,\n  "trail_atr": 2,\n  "commission_per_lot_side": 0,\n  "slippage_points": 0\n}')
+  const [paramsText, setParamsText] = useState('{\n  "timeframe": "M5",\n  "risk_fraction": 0.005,\n  "fast_period": 12,\n  "slow_period": 26,\n  "atr_period": 14,\n  "stop_atr": 2,\n  "target_r": 2,\n  "trail_atr": 2,\n  "commission_per_lot_side": 0,\n  "slippage_points": 0\n}')
+  const [initialBalance, setInitialBalance] = useState('10000')
+  const [leverage, setLeverage] = useState('100')
   const [run, setRun] = useState<ReplayRun | null>(null)
   const [events, setEvents] = useState<ReplayRunEvent[]>([])
   const [ticks, setTicks] = useState<ReplayTick[]>([])
@@ -182,6 +184,23 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const completeCount = useMemo(() => archives.filter(archive => archive.status === 'complete').length, [archives])
   const selectedArchive = archives.find(archive => archive.id === selectedArchiveId)
   const selectedStrategy = strategies.find(strategy => strategy.id === selectedStrategyId)
+  const accountSnapshot = selectedArchive?.manifest?.account_snapshot as Record<string, unknown> | undefined
+  const depositCurrency = String(accountSnapshot?.currency || selectedArchive?.manifest?.account_currency || '—')
+
+  const chooseArchive = (archive: ReplayArchive) => {
+    setSelectedArchiveId(archive.id)
+    setInitialBalance(String(accountSnapshotValue(archive, 'balance', 10_000)))
+    setLeverage(String(accountSnapshotValue(archive, 'leverage', 100)))
+    setTicks([])
+    setRun(null)
+    setEvents([])
+  }
+
+  const accountSnapshotValue = (archive: ReplayArchive, key: string, fallback: number) => {
+    const snapshot = archive.manifest?.account_snapshot as Record<string, unknown> | undefined
+    const number = Number(snapshot?.[key])
+    return Number.isFinite(number) && number > 0 ? number : fallback
+  }
 
   const refreshArchives = async () => {
     try {
@@ -320,6 +339,15 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
       setError(reason instanceof Error ? reason.message : 'Parametry muszą być poprawnym JSON-em.')
       return
     }
+    const startBalance = Number(initialBalance)
+    const selectedLeverage = Number(leverage)
+    if (!Number.isFinite(startBalance) || startBalance <= 0 || !Number.isFinite(selectedLeverage) || selectedLeverage < 1 || selectedLeverage > 100_000) {
+      setError('Podaj dodatnie saldo początkowe i dźwignię z zakresu 1–100000.')
+      return
+    }
+    params.initial_balance = startBalance
+    params.leverage = selectedLeverage
+    params.account_currency = depositCurrency === '—' ? '' : depositCurrency
     setError('')
     setEvents([])
     try { setRun(await startReplayRun({ archiveId: selectedArchiveId, strategyId: selectedStrategyId, params })) }
@@ -419,6 +447,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <label>OD<input type="datetime-local" value={fromTime} onChange={event => setFromTime(event.target.value)} /></label>
             <label>DO<input type="datetime-local" value={toTime} onChange={event => setToTime(event.target.value)} /></label>
           </div>
+          <div className="fx-replay-data-mode"><span>TRYB TESTU</span><b>RZECZYWISTE TICKI MT5 · BID / ASK</b><small>Importujemy ticki brokera bez syntetycznego modelu OHLC.</small></div>
           <p className="fx-replay-note">Luna › Import wymaga uruchomionego MT5. Ticki zapiszę w UTC; gotowe archiwum będzie dostępne offline.</p>
           <div className="fx-replay-actions">
             <button type="submit" disabled={busy || !!activeJob}>{busy ? 'ŁĄCZĘ Z MT5…' : 'IMPORTUJ TICKI'}</button>
@@ -439,7 +468,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <p>{archive.broker || 'Broker MT5'} · {archive.server || 'serwer niepodany'}</p>
             <p>{showTime(archive.from_ms)} → {showTime(archive.to_ms)}</p>
             <div className="fx-replay-archive-footer"><span>{archive.tick_count.toLocaleString('pl-PL')} ticków</span><span>{archive.sha256 ? 'SHA-256 ' + archive.sha256.slice(0, 12) + '…' : archive.error || 'bez sumy — import niekompletny'}</span></div>
-            {archive.status === 'complete' && <div className="fx-replay-archive-actions"><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { setSelectedArchiveId(archive.id); setTicks([]); setRun(null); setEvents([]) }}>{selectedArchiveId === archive.id ? 'WYBRANE DO SYMULACJI' : 'WYBIERZ ARCHIWUM'}</button><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { setSelectedArchiveId(archive.id); void loadTickPage(archive.id, 0) }}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ ODTWARZACZ'}</button></div>}
+            {archive.status === 'complete' && <div className="fx-replay-archive-actions"><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => chooseArchive(archive)}>{selectedArchiveId === archive.id ? 'WYBRANE DO SYMULACJI' : 'WYBIERZ ARCHIWUM'}</button><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { chooseArchive(archive); void loadTickPage(archive.id, 0) }}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ ODTWARZACZ'}</button></div>}
           </article>)}
         </section>
         <section className="fx-replay-strategies" aria-labelledby="fx-replay-strategy-title">
@@ -450,8 +479,13 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <button type="button" onClick={() => void addStrategy()} disabled={!strategyName.trim() || !strategySource.trim()}>ZAPISZ SKRYPT</button>
             <label className="fx-replay-select-label">ZAPISANY SKRYPT<select value={selectedStrategyId} onChange={event => void selectStrategy(event.target.value)}><option value="">Wybierz strategię</option>{strategies.map(strategy => <option key={strategy.id} value={strategy.id}>{strategy.name} · v{strategy.api_version}{strategy.api_version !== 2 ? ' · wczytaj do migracji' : ''}</option>)}</select></label>
           </div>
+          <div className="fx-replay-account-settings" aria-label="Ustawienia rachunku testowego">
+            <label>SALDO STARTOWE<input type="number" min="0.01" step="any" value={initialBalance} onChange={event => setInitialBalance(event.target.value)} /></label>
+            <label>DŹWIGNIA<select value={leverage} onChange={event => setLeverage(event.target.value)}>{[1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000].map(value => <option key={value} value={value}>1:{value}</option>)}{!([1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000].includes(Number(leverage))) && <option value={leverage}>1:{leverage} · własna</option>}</select></label>
+            <span>WALUTA DEPOZYTU <b>{depositCurrency}</b></span>
+          </div>
           <label>PARAMETRY JSON<textarea className="fx-replay-params" spellCheck={false} value={paramsText} onChange={event => setParamsText(event.target.value)} /></label>
-          <p className="fx-replay-note">Luna › API v2 udostępnia zamknięte świece, SMA/EMA/ATR, wolumen liczony od SL oraz modyfikację stopów. Start: 10 000 {String(selectedArchive?.manifest?.account_currency || 'waluty archiwum')}, ryzyko 0,5% na transakcję. Brak waluty lub wartości ticka blokuje sizing. Symulacja nie wysyła zleceń do MT5.</p>
+          <p className="fx-replay-note">Luna › Ustawienia konta startują z migawki MT5 zapisanej przy imporcie. Margin jest szacowany z brokerowego wyliczenia dla bieżącego symbolu; historyczne przewalutowanie, swap i stop-out nie są odtwarzane. BUY/SELL używają Ask/Bid, ticki pozostają rzeczywiste. Symulacja nie wysyła zleceń do MT5.</p>
           <div className="fx-replay-actions">
             <button type="button" disabled={!selectedArchiveId || !selectedStrategyId || selectedStrategy?.api_version !== 2 || !!run && ['queued', 'running'].includes(run.status)} onClick={() => void simulate()}>URUCHOM SYMULACJĘ</button>
             {run && ['queued', 'running'].includes(run.status) && <button type="button" className="secondary" onClick={() => void cancelRun()}>ANULUJ</button>}
@@ -460,7 +494,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <div><b>{run.status === 'complete' ? 'Luna › Symulacja zakończona.' : run.status === 'failed' ? 'Luna › Skrypt zakończył się błędem.' : run.status === 'cancelled' ? 'Luna › Symulacja anulowana.' : 'Luna › Przetwarzam ticki…'}</b><span>{run.progress_ticks.toLocaleString('pl-PL')} / {run.total_ticks.toLocaleString('pl-PL')}</span></div>
             {['queued', 'running'].includes(run.status) && <progress max={Math.max(1, run.total_ticks)} value={run.progress_ticks} />}
             {run.error && <small>{run.error}</small>}
-            {run.report && <div className="fx-replay-metrics"><span>Zamknięcia <b>{String(run.report.closed_exits ?? 0)}</b></span><span>Dodatnie <b>{String(run.report.winning_exits ?? 0)}</b></span><span>Ujemne <b>{String(run.report.losing_exits ?? 0)}</b></span><span>Ruch ceny ważony punktami <b>{Number(run.report.net_points_volume ?? 0).toLocaleString('pl-PL')}</b></span><span>Wynik {String(run.report.account_currency || '')} <b>{run.report.realized_pnl_account_currency_estimate == null ? 'N/D · brak danych ticka' : Number(run.report.realized_pnl_account_currency_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span><span>Max obsunięcie {String(run.report.account_currency || '')} <b>{run.report.max_drawdown_account_currency_estimate == null ? 'N/D' : Number(run.report.max_drawdown_account_currency_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span></div>}
+            {run.report && <div className="fx-replay-metrics"><span>Zamknięcia <b>{String(run.report.closed_exits ?? 0)}</b></span><span>Dodatnie <b>{String(run.report.winning_exits ?? 0)}</b></span><span>Ujemne <b>{String(run.report.losing_exits ?? 0)}</b></span><span>Ruch ceny ważony punktami <b>{Number(run.report.net_points_volume ?? 0).toLocaleString('pl-PL')}</b></span><span>Wynik {String(run.report.account_currency || '')} <b>{run.report.realized_pnl_account_currency_estimate == null ? 'N/D · brak danych ticka' : Number(run.report.realized_pnl_account_currency_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span><span>Max obsunięcie {String(run.report.account_currency || '')} <b>{run.report.max_drawdown_account_currency_estimate == null ? 'N/D' : Number(run.report.max_drawdown_account_currency_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span><span>Dźwignia / start <b>1:{String(run.report.leverage ?? '—')} · {Number(run.report.initial_balance ?? 0).toLocaleString('pl-PL')} {String(run.report.account_currency || '')}</b></span><span>Szczyt margin <b>{run.report.peak_margin_used_estimate == null ? 'N/D · brak kalibracji MT5' : Number(run.report.peak_margin_used_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span><span>Najniższy wolny margin <b>{run.report.minimum_free_margin_estimate == null ? 'N/D' : Number(run.report.minimum_free_margin_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span><span>Odrzucone przez margin <b>{String(run.report.rejected_orders ?? 0)}</b></span></div>}
           </div>}
           {events.length > 0 && <div className="fx-replay-events"><div className="fx-replay-section-title"><span>04</span> DZIENNIK ZDARZEŃ <small>PIERWSZE {events.length}</small></div><div className="fx-replay-event-list">{events.map(event => <div key={event.sequence} className={'fx-replay-event fx-replay-event--' + event.kind}><time>{showTime(event.time_msc)}</time><b>{event.kind.toUpperCase()}</b><span>{String(event.side || event.reason || '')}</span><span>{Number(event.price || 0).toLocaleString('pl-PL')}</span>{event.points !== undefined && <strong>{Number(event.points).toFixed(1)} pkt</strong>}</div>)}</div></div>}
         </section>

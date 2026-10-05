@@ -122,6 +122,17 @@ def on_stop(context):
 - Wynik pieniężny jest szacunkiem z tick value i waluty konta zapisanych przy
   imporcie. Raport pokazuje `null` przy braku niezbędnych metadanych; nie
   odtwarza historycznych zmian tick value ani kursów przewalutowania.
+- Nowy import zapisuje migawkę salda, waluty, dźwigni i trybu margin konta oraz
+  specyfikację margin symbolu. `order_calc_margin` MT5 kalibruje orientacyjny
+  wymóg margin dla BUY/SELL na kwotowaniu z chwili importu. Ustawienie testu
+  przyjmuje własne saldo startowe i dźwignię; kalibracja per lot jest statyczna
+  w całym archiwum, a wpływ dźwigni jest przeliczany dla trybów Forex i
+  CFD-leverage. Zlecenie zablokowane przez szacowany brak wolnego margin trafia
+  do dziennika jako `order_rejected` i nie przerywa całego przebiegu.
+- To nie jest pełna kopia kontowego silnika MT5: historyczne reguły margin,
+  cross-rates, stop-out, margin hedged/netting, swap i prowizje brokera nie są
+  rekonstruowane. Wyniki margin mają etykietę szacunkową; jeśli MT5 nie podał
+  kalibracji, raport pokaże margin jako niedostępny i nie będzie udawał dokładności.
 - `risk_volume` uwzględnia odległość SL, tick value loss, skonfigurowaną
   prowizję i poślizg przy wyjściu. Odmawia transakcji, gdy dane są niepełne,
   kapitał wynosi zero lub mniej albo wolumen wypadłby poniżej minimum.

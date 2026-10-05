@@ -374,6 +374,9 @@ def _account_payload() -> dict[str, Any]:
         "trade_allowed": bool(info.trade_allowed),
         "trade_expert": bool(info.trade_expert),
         "margin_mode": int(info.margin_mode),
+        "margin_so_call": float(getattr(info, "margin_so_call", 0) or 0),
+        "margin_so_so": float(getattr(info, "margin_so_so", 0) or 0),
+        "margin_so_mode": int(getattr(info, "margin_so_mode", 0) or 0),
         "trade_mode": int(info.trade_mode),
         "day_pnl": float(day_pnl + info.profit),
         "daily_win_rate": _daily_win_rate(deals, open_position_ids),
@@ -405,6 +408,12 @@ def _symbol_payload(symbol: str) -> dict[str, Any]:
         "currency_profit": info.currency_profit,
         "currency_margin": info.currency_margin,
         "trade_mode": int(info.trade_mode),
+        "trade_calc_mode": int(getattr(info, "trade_calc_mode", -1)),
+        "margin_initial": float(getattr(info, "margin_initial", 0) or 0),
+        "margin_maintenance": float(getattr(info, "margin_maintenance", 0) or 0),
+        "margin_hedged": float(getattr(info, "margin_hedged", 0) or 0),
+        "margin_long": float(getattr(info, "margin_long", 0) or 0),
+        "margin_short": float(getattr(info, "margin_short", 0) or 0),
         "visible": bool(info.visible),
         "chart_mode": int(info.chart_mode),
     }
@@ -873,8 +882,44 @@ def replay_import_start(request: Request, body: dict[str, Any]):
             account = mt5.account_info()
             terminal = mt5.terminal_info()
             symbol_info = _symbol_payload(symbol)
+            tick = mt5.symbol_info_tick(symbol)
             if account is None or terminal is None:
                 raise HTTPException(status_code=503, detail={"error": "MT5_METADATA_UNAVAILABLE", "last_error": _last_error()})
+
+            account_snapshot = {
+                "balance": float(account.balance),
+                "equity": float(account.equity),
+                "leverage": int(account.leverage),
+                "currency": str(account.currency or "").upper(),
+                "margin_mode": int(account.margin_mode),
+                "margin_so_call": float(getattr(account, "margin_so_call", 0) or 0),
+                "margin_so_so": float(getattr(account, "margin_so_so", 0) or 0),
+                "margin_so_mode": int(getattr(account, "margin_so_mode", 0) or 0),
+                "captured_at_ms": int(time.time() * 1000),
+            }
+            margin_calibration: dict[str, Any] = {
+                "source": "MT5 order_calc_margin at import quote",
+                "reference_leverage": int(account.leverage),
+                "trade_calc_mode": symbol_info["trade_calc_mode"],
+                "bid": float(getattr(tick, "bid", 0) or 0) if tick else 0,
+                "ask": float(getattr(tick, "ask", 0) or 0) if tick else 0,
+                "buy_per_lot": None,
+                "sell_per_lot": None,
+            }
+            volume_min = float(symbol_info.get("volume_min") or 0)
+            if tick and volume_min > 0:
+                for side, order_type, quote in (
+                    ("buy", getattr(mt5, "ORDER_TYPE_BUY", None), margin_calibration["ask"]),
+                    ("sell", getattr(mt5, "ORDER_TYPE_SELL", None), margin_calibration["bid"]),
+                ):
+                    if order_type is None or quote <= 0:
+                        continue
+                    try:
+                        required_margin = mt5.order_calc_margin(order_type, symbol, volume_min, quote)
+                        if required_margin is not None and math.isfinite(float(required_margin)) and float(required_margin) > 0:
+                            margin_calibration[f"{side}_per_lot"] = float(required_margin) / volume_min
+                    except Exception:
+                        pass
 
         archive_id = replay_store.create_archive(
             requested_symbol=requested_symbol.strip(),
@@ -885,6 +930,8 @@ def replay_import_start(request: Request, body: dict[str, Any]):
             to_ms=to_ms,
             symbol_info=symbol_info,
             account_currency=str(getattr(account, "currency", "") or ""),
+            account_snapshot=account_snapshot,
+            margin_calibration=margin_calibration,
         )
         job = {
             "id": job_id,

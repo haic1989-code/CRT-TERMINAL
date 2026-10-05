@@ -155,6 +155,8 @@ def create_archive(
     to_ms: int,
     symbol_info: dict[str, Any],
     account_currency: str = "",
+    account_snapshot: dict[str, Any] | None = None,
+    margin_calibration: dict[str, Any] | None = None,
 ) -> str:
     archive_id = str(uuid.uuid4())
     now = _now()
@@ -168,6 +170,8 @@ def create_archive(
         "server": server,
         "timezone": "UTC",
         "account_currency": account_currency.upper(),
+        "account_snapshot": account_snapshot or {},
+        "margin_calibration": margin_calibration or {},
         "from_ms": from_ms,
         "to_ms": to_ms,
         "symbol_info": symbol_info,
