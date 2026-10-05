@@ -1,6 +1,6 @@
 # CRT Terminal — lokalny odtwarzacz i tester strategii
 
-**Stan:** konstrukcja zatwierdzona do realizacji  
+**Stan:** konstrukcja zatwierdzona; przygotowanie pierwszego etapu\
 **Zakres V1:** jeden instrument, rzeczywiste ticki MT5, skrypty strategii w Pythonie, wyłącznie symulowane zlecenia.
 
 ## Cel
@@ -8,6 +8,10 @@
 Zbudować prosty tester działający lokalnie. MT5 służy do pobrania ticków i metadanych symbolu. Po imporcie historii tester działa bez aktywnego MT5 i bez połączenia z brokerem. Użytkownik może uruchamiać własne skrypty Python, zobaczyć symulowane wejścia i wyjścia, wynik w pipsach/punktach oraz płynnie przewijać przebieg w obu kierunkach.
 
 Tester nie wysyła zleceń do MT5. Nie uruchamia plików `.mq5` ani `.ex5`.
+
+## Tryb pracy aplikacji
+
+Obecny start CRT wymaga gotowego mostu MT5 i świeżej historii wykresu. Przed udostępnieniem replay trzeba rozdzielić gotowość aplikacji od gotowości brokera: moduły i updater uruchamiają się normalnie, a brak MT5 przełącza terminal w stan offline. W tym stanie użytkownik może otworzyć wcześniej zapisane archiwum i odtwarzać test. Import nowej historii wymaga działającego MT5. Nie wyświetlamy fikcyjnego statusu „MT5 gotowe” ani przykładowych danych.
 
 ## Przepływ danych
 
@@ -44,6 +48,7 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 
 ### 1. Historia tickowa
 
+- Rozdzielić gotowość startu terminalu od gotowości MT5, aby lokalny tester uruchamiał się bez brokera.
 - Dodać do mostu pobieranie zakresu rzeczywistych ticków z walidacją i limitem zakresu.
 - Dodać kontrakt zbioru CRT, lokalny zapis oraz ekran wyboru symbolu/zakresu i postęp importu.
 - Pokazać liczbę ticków, źródło, zakres oraz stan kompletności przed rozpoczęciem testu.
