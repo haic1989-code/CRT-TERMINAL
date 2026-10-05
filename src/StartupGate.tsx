@@ -45,6 +45,8 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [closing, setClosing] = useState(false)
   const [modulesReady, setModulesReady] = useState(false)
   const [bridgeReady, setBridgeReady] = useState(false)
+  const [offlineOffer, setOfflineOffer] = useState(false)
+  const [offlineMode, setOfflineMode] = useState(false)
   const [chartReady, setChartReady] = useState(false)
   const [dataChecksFinished, setDataChecksFinished] = useState(false)
   const [updatesChecked, setUpdatesChecked] = useState(false)
@@ -102,6 +104,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
       } else {
         const detail = await readBridgeStartupMessage()
         if (dead) return
+        setOfflineOffer(true)
         setDiagnostic([readiness.message, detail].filter(Boolean).join(' · '))
         timer = window.setTimeout(() => void connect(), 1500)
       }
@@ -122,7 +125,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer)
   }, [lines, cursor])
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }) }, [cursor])
-  const ready = modulesReady && bridgeReady && chartReady && dataChecksFinished && updatesChecked && !update && !fatal && !installFailed && !installing
+  const ready = modulesReady && updatesChecked && !update && !fatal && !installFailed && !installing
+    && (offlineMode || (bridgeReady && chartReady && dataChecksFinished))
+  const continueOffline = useCallback(() => {
+    if (!offlineOffer || !modulesReady || !updatesChecked || update || fatal || installing) return
+    setOfflineMode(true)
+    report('Nie mam połączenia z MT5. Uruchamiam terminal offline; na żywo nie pokażę danych, dopóki most nie będzie dostępny.')
+  }, [offlineOffer, modulesReady, updatesChecked, update, fatal, installing, report])
   const continueToTerminal = useCallback(() => {
     if (!ready || closing || cursor.row < lines.length) return
     setClosing(true)
@@ -162,8 +171,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
             <span className="crt-boot-accessible">{line.text}</span><span aria-hidden="true">{index < cursor.row ? line.text : line.text.slice(0, cursor.char)}{index === cursor.row && <i className="crt-boot-cursor">▌</i>}</span>
           </p>)}
         </div>
-        {!bridgeReady && !fatal && <p className="crt-boot-diagnostic">Luna › Czekam na MT5… {diagnostic}</p>}
+        {!bridgeReady && !offlineMode && !fatal && <p className="crt-boot-diagnostic">Luna › Czekam na MT5… {diagnostic}</p>}
+        {offlineMode && <p className="crt-boot-diagnostic">Luna › Tryb offline. Dane na żywo będą niedostępne do czasu połączenia z MT5.</p>}
         {modulesReady && bridgeReady && !chartReady && <p className="crt-boot-diagnostic">Luna › Czekam na historię świec z MT5…</p>}
+        {offlineOffer && !offlineMode && !bridgeReady && !fatal && <div className="crt-boot-actions"><button className="crt-boot-offline-button" disabled={!modulesReady || !updatesChecked || !!update || installing} onClick={continueOffline}>Uruchom CRT offline</button></div>}
         {update && !installFailed && <div className="crt-boot-actions"><button disabled={installing} onClick={() => void install()}>Zainstaluj wersję {update.version}</button><button disabled={installing} onClick={() => { void update.close(); activeUpdate.current = null; setUpdate(null); report('Zostaję przy obecnej wersji, zgodnie z Twoim wyborem.') }}>Uruchom obecną wersję</button></div>}
         {progress && <p role="status">{progress.startsWith('Luna') ? progress : `Luna › ${progress}`}</p>}
         {(fatal || installFailed) && <div className="crt-boot-actions"><button onClick={() => { void import('@tauri-apps/plugin-process').then(module => module.relaunch()).catch(() => window.location.reload()) }}>Uruchom ponownie</button></div>}

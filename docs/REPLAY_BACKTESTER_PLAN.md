@@ -1,6 +1,6 @@
 # CRT Terminal — lokalny odtwarzacz i tester strategii
 
-**Stan:** plan gotowy; implementacja jeszcze nierozpoczęta\
+**Stan:** rozpoczęto etap 1 — start offline\
 **Zakres V1:** jeden instrument, rzeczywiste ticki MT5, skrypty strategii w Pythonie, wyłącznie symulowane zlecenia.
 
 ## Postęp
@@ -10,7 +10,7 @@
 - [x] Uzgodnić przewijanie odtworzonego przebiegu w przód i w tył.
 - [x] Uzgodnić przycisk `FX REPLAY` oraz CRT styl dedykowanego widoku.
 - [x] Zapisać i wypchnąć plan do repozytorium.
-- [ ] Rozpocząć implementację pierwszego etapu: uruchamianie terminalu offline.
+- [x] Rozpocząć implementację pierwszego etapu: uruchamianie terminalu offline.
 
 ## Cel
 
