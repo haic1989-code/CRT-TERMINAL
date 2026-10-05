@@ -455,7 +455,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
           </div>
           {job && <div className={'fx-replay-job fx-replay-job--' + job.status} role="status" aria-live="polite">
             <div><b>{job.status === 'complete' ? 'Luna › Archiwum gotowe.' : job.status === 'failed' ? 'Luna › Import zatrzymał się z błędem.' : job.status === 'cancelled' ? 'Luna › Import anulowany.' : job.status === 'finalizing' ? 'Luna › Zapisuję sumę kontrolną archiwum…' : 'Luna › Pobieram ticki z MT5…'}</b><span>{job.symbol} · {job.tick_count.toLocaleString('pl-PL')} ticków</span></div>
-            {activeJob && <><progress max="100" value={job.progress} /><span>{job.progress}% · do {showTime(job.completed_through_ms)}</span></>}
+            {activeJob && <><progress max="100" value={job.progress} /><span>{job.stage === 'mt5_fetch' ? `MT5 pobiera ${job.range_from_ms ? showTime(job.range_from_ms) : ''} → ${job.range_to_ms ? showTime(job.range_to_ms) : ''}` : job.stage === 'sqlite_write' ? 'Zapisuję pobrane ticki do lokalnego archiwum…' : job.stage === 'sha256_finalize' ? 'Kończę sumę kontrolną bez ponownego skanowania archiwum…' : `Zakres: ${job.progress}% · do ${showTime(job.completed_through_ms)}`} · {Number(job.ticks_per_second || 0).toLocaleString('pl-PL')} tick/s</span><small>Ostatnia porcja · MT5 {Number(job.last_chunk_fetch_ms || 0)} ms · zapis {Number(job.last_chunk_write_ms || 0)} ms</small></>}
             {job.error && <small>{job.error}</small>}
           </div>}
           {error && <p className="fx-replay-error" role="alert">Luna › {error}</p>}

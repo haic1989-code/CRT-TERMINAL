@@ -54,9 +54,14 @@ Desktop przekazuje mostowi prywatną ścieżkę katalogu danych. Ręczny bridge 
 - `POST /v1/replay/imports` przyjmuje dokładny lub aliasowy symbol oraz `from_ms` i
   `to_ms` jako znaczniki UTC w milisekundach. Operacja wymaga aktywnego MT5 i
   dokładnego dozwolonego originu CRT.
-- Ticki są pobierane przez `copy_ticks_range` w godzinnych porcjach i zapisywane
+- Ticki są pobierane przez `copy_ticks_range` w adaptacyjnych porcjach (do 24 h
+  dla pustych zakresów i zwykle do ok. 500 tys. ticków na porcję) i zapisywane
   z oryginalnym czasem, Bid, Ask, Last, wolumenem i flagami. API nie generuje ticków
-  z OHLC.
+  z OHLC. Postęp pokazuje osobno czas odpowiedzi MT5, zapis SQLite i końcowe
+  hashowanie, żeby wskazać rzeczywiste wąskie gardło.
+- Import korzysta z WAL, cache 64 MB i `synchronous=NORMAL`; skrót SHA-256 jest
+  aktualizowany podczas zapisu zamiast ponownie odczytywać całe archiwum. Usunięto
+  nieużywany indeks czasu, który wykonywał dodatkowy zapis dla każdego ticka.
 - `GET /v1/replay/imports/{id}` zwraca postęp; `POST .../{id}/cancel` anuluje import.
 - `GET /v1/replay/archives` pokazuje manifesty i stan importu. Tylko stan `complete`
   może być czytany przez `GET /v1/replay/archives/{id}/ticks`; endpoint zwraca strony

@@ -786,6 +786,15 @@ def _replay_job_payload(job: dict[str, Any]) -> dict[str, Any]:
         "completed_through_ms": job["completed_through_ms"],
         "tick_count": job["tick_count"],
         "progress": job["progress"],
+        "stage": job.get("stage", "queued"),
+        "range_from_ms": job.get("range_from_ms"),
+        "range_to_ms": job.get("range_to_ms"),
+        "last_chunk_fetch_ms": job.get("last_chunk_fetch_ms"),
+        "last_chunk_write_ms": job.get("last_chunk_write_ms"),
+        "fetch_total_ms": job.get("fetch_total_ms", 0),
+        "write_total_ms": job.get("write_total_ms", 0),
+        "finalize_ms": job.get("finalize_ms"),
+        "ticks_per_second": round(job["tick_count"] / max(0.1, time.monotonic() - job.get("started_monotonic", time.monotonic())), 1),
         "error": job["error"],
         "archive": replay_store.get_archive(job["archive_id"]),
     }
@@ -798,12 +807,11 @@ def _run_replay_import(job_id: str) -> None:
     archive_id = job["archive_id"]
     cursor_ms = job["from_ms"]
     try:
-        # Begin with a conservative hour, then adapt request size to the
-        # symbol's observed tick density. This cuts MT5 IPC round trips for
-        # quiet symbols while keeping each returned NumPy array bounded.
-        min_chunk_ms = 15 * 60 * 1000
-        max_chunk_ms = 4 * 60 * 60 * 1000
-        target_ticks_per_chunk = 150_000
+        # MT5 calls dominate latency for long archives. Keep each NumPy response
+        # bounded, but allow a full day for sparse symbols to reduce IPC calls.
+        min_chunk_ms = 30 * 60 * 1000
+        max_chunk_ms = 24 * 60 * 60 * 1000
+        target_ticks_per_chunk = 500_000
         chunk_ms = 60 * 60 * 1000
         while cursor_ms <= job["to_ms"]:
             if job["cancel"].is_set() or _closing.is_set():
@@ -814,14 +822,26 @@ def _run_replay_import(job_id: str) -> None:
             chunk_to_ms = min(cursor_ms + chunk_ms - 1, job["to_ms"])
             date_from = datetime.fromtimestamp(cursor_ms / 1000, timezone.utc)
             date_to = datetime.fromtimestamp(chunk_to_ms / 1000, timezone.utc)
+            with _replay_jobs_lock:
+                job.update(stage="mt5_fetch", range_from_ms=cursor_ms, range_to_ms=chunk_to_ms)
+            fetch_started = time.monotonic()
             with _lock:
                 _ensure_connected()
                 rates = _required(
                     mt5.copy_ticks_range(job["symbol"], date_from, date_to, mt5.COPY_TICKS_ALL),
                     "REPLAY_TICKS_UNAVAILABLE",
                 )
-            added, latest_ms = replay_store.append_ticks(archive_id, rates, cursor_ms, chunk_to_ms)
+            fetch_duration_ms = int((time.monotonic() - fetch_started) * 1000)
             with _replay_jobs_lock:
+                job["last_chunk_fetch_ms"] = fetch_duration_ms
+                job["fetch_total_ms"] = job.get("fetch_total_ms", 0) + fetch_duration_ms
+                job["stage"] = "sqlite_write"
+            write_started = time.monotonic()
+            added, latest_ms = replay_store.append_ticks(archive_id, rates, cursor_ms, chunk_to_ms)
+            write_duration_ms = int((time.monotonic() - write_started) * 1000)
+            with _replay_jobs_lock:
+                job["last_chunk_write_ms"] = write_duration_ms
+                job["write_total_ms"] = job.get("write_total_ms", 0) + write_duration_ms
                 job["tick_count"] += added
                 job["completed_through_ms"] = chunk_to_ms
                 span = max(1, job["to_ms"] - job["from_ms"])
@@ -830,15 +850,17 @@ def _run_replay_import(job_id: str) -> None:
             if added == 0:
                 chunk_ms = max_chunk_ms
             else:
-                scale = max(0.5, min(3.0, target_ticks_per_chunk / added))
+                scale = max(0.35, min(8.0, target_ticks_per_chunk / added))
                 chunk_ms = max(min_chunk_ms, min(max_chunk_ms, int(chunk_ms * scale)))
             cursor_ms = chunk_to_ms + 1
 
         with _replay_jobs_lock:
-            job.update(status="finalizing", progress=99)
+            job.update(status="finalizing", stage="sha256_finalize", progress=99)
+        finalize_started = time.monotonic()
         archive = replay_store.finish_archive(archive_id)
+        finalize_duration_ms = int((time.monotonic() - finalize_started) * 1000)
         with _replay_jobs_lock:
-            job.update(status="complete", progress=100, archive=archive, error=None)
+            job.update(status="complete", stage="complete", finalize_ms=finalize_duration_ms, progress=100, archive=archive, error=None)
     except Exception as error:
         try:
             replay_store.set_archive_state(archive_id, "failed", str(error))
@@ -943,6 +965,10 @@ def replay_import_start(request: Request, body: dict[str, Any]):
             "completed_through_ms": from_ms,
             "tick_count": 0,
             "progress": 0,
+            "stage": "queued",
+            "started_monotonic": time.monotonic(),
+            "fetch_total_ms": 0,
+            "write_total_ms": 0,
             "error": None,
             "cancel": threading.Event(),
         }

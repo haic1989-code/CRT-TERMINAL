@@ -26,6 +26,9 @@ Poziomy wybiera się w konsoli CRT na wykresie. Integracja lokalnego modelu i
 kafel Agent Advice zostały usunięte. Od 0.1.14 własny most aplikacji desktopowej obsługuje ręcznie potwierdzane zlecenia DEMO; konta rzeczywiste i podgląd przeglądarkowy są zablokowane dla egzekucji. Starszy widok jest
 dostępny pod `?ui=legacy`.
 Odzyskano również poprawkę TPO Market Profile opisaną w `MARKET_PROFILE_FIX.md`.
+Import historii FX Replay używa adaptacyjnych zakresów MT5, szybszego zapisu SQLite
+i pomiarów osobno dla pobierania, zapisu oraz finalizacji. Istniejące kompletne
+archiwa pozostają ważne; ponowne pobieranie jest potrzebne tylko dla nowych okresów.
 
 ## Szybki start — Windows
 

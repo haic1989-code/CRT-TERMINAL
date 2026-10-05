@@ -17,7 +17,9 @@ _db_path: Path | None = None
 _initialized = False
 _db_lock = threading.RLock()
 _TICK_HASH_RECORD = struct.Struct("<qdddqdq")
-_TICK_INSERT_BATCH_SIZE = 25_000
+_TICK_INSERT_BATCH_SIZE = 100_000
+_TICK_HASH_RECORDS_PER_BUFFER = 8192
+_archive_hashers: dict[str, tuple[Any, bytearray, int]] = {}
 
 
 def initialize(data_dir: str | Path) -> Path:
@@ -57,8 +59,6 @@ def initialize(data_dir: str | Path) -> Path:
                     flags INTEGER NOT NULL,
                     PRIMARY KEY (archive_id, sequence)
                 );
-                CREATE INDEX IF NOT EXISTS idx_ticks_archive_time
-                    ON ticks(archive_id, time_msc, sequence);
                 CREATE INDEX IF NOT EXISTS idx_archives_status_created
                     ON archives(status, created_at DESC);
                 CREATE TABLE IF NOT EXISTS strategies (
@@ -95,6 +95,9 @@ def initialize(data_dir: str | Path) -> Path:
                     ON replay_run_events(run_id, sequence);
             """)
             db.execute("PRAGMA journal_mode=WAL")
+            # Replay reads and pages ticks by sequence. This time index is not
+            # used by any query and doubles the B-tree work for every imported tick.
+            db.execute("DROP INDEX IF EXISTS idx_ticks_archive_time")
             event_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(replay_run_events)")}
             if "tick_sequence" not in event_columns:
                 db.execute("ALTER TABLE replay_run_events ADD COLUMN tick_sequence INTEGER")
@@ -129,6 +132,10 @@ def _connect() -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=10000")
+    # WAL + NORMAL keeps the archive durable across normal app/process exits,
+    # while avoiding an fsync for every transaction in a bulk tick import.
+    db.execute("PRAGMA synchronous=NORMAL")
+    db.execute("PRAGMA cache_size=-64000")
     return db
 
 
@@ -181,6 +188,7 @@ def create_archive(
             "INSERT INTO archives(id,status,requested_symbol,symbol,broker,server,from_ms,to_ms,manifest_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (archive_id, "importing", requested_symbol, symbol, broker, server, from_ms, to_ms, json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), now, now),
         )
+    _archive_hashers[archive_id] = (hashlib.sha256(), bytearray(_TICK_HASH_RECORD.size * _TICK_HASH_RECORDS_PER_BUFFER), 0)
     return archive_id
 
 
@@ -198,6 +206,10 @@ def append_ticks(archive_id: str, rows: Iterable[Any], expected_from_ms: int, ex
         previous_ms = int(previous[0]) if previous is not None else None
         latest_ms = previous_ms
         added = 0
+        hasher, hash_buffer, hash_offset = _archive_hashers.get(
+            archive_id,
+            (hashlib.sha256(), bytearray(_TICK_HASH_RECORD.size * _TICK_HASH_RECORDS_PER_BUFFER), 0),
+        )
         batch: list[tuple[str, int, int, float, float, float, int, float, int]] = []
         insert_sql = "INSERT INTO ticks(archive_id,sequence,time_msc,bid,ask,last,volume,volume_real,flags) VALUES(?,?,?,?,?,?,?,?,?)"
 
@@ -218,6 +230,11 @@ def append_ticks(archive_id: str, rows: Iterable[Any], expected_from_ms: int, ex
             if min(bid, ask, last, volume_real) < 0 or volume < 0 or (bid > 0 and ask > 0 and ask < bid):
                 raise ValueError("MT5 zwrócił nieprawidłowe wartości ticka.")
             batch.append((archive_id, sequence + added, time_msc, bid, ask, last, volume, volume_real, flags))
+            _TICK_HASH_RECORD.pack_into(hash_buffer, hash_offset, time_msc, bid, ask, last, volume, volume_real, flags)
+            hash_offset += _TICK_HASH_RECORD.size
+            if hash_offset == len(hash_buffer):
+                hasher.update(hash_buffer)
+                hash_offset = 0
             previous_ms = latest_ms = time_msc
             added += 1
             if len(batch) >= _TICK_INSERT_BATCH_SIZE:
@@ -228,6 +245,8 @@ def append_ticks(archive_id: str, rows: Iterable[Any], expected_from_ms: int, ex
             db.executemany(insert_sql, batch)
         if not added:
             return 0, latest_ms
+
+        _archive_hashers[archive_id] = (hasher, hash_buffer, hash_offset)
 
         total = sequence + added
         db.execute("UPDATE archives SET tick_count=?,updated_at=? WHERE id=?", (total, _now(), archive_id))
@@ -241,21 +260,29 @@ def finish_archive(archive_id: str) -> dict[str, Any]:
             raise ValueError("Nie znaleziono aktywnego importu.")
         if int(archive["tick_count"]) == 0:
             raise ValueError("MT5 nie zwrócił ticków w wybranym zakresie.")
-        digest = hashlib.sha256()
-        cursor = db.execute(
-            "SELECT time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence",
-            (archive_id,),
-        )
-        hash_buffer = bytearray(_TICK_HASH_RECORD.size * 8192)
-        buffer_offset = 0
-        for row in cursor:
-            _TICK_HASH_RECORD.pack_into(hash_buffer, buffer_offset, *row)
-            buffer_offset += _TICK_HASH_RECORD.size
-            if buffer_offset == len(hash_buffer):
-                digest.update(hash_buffer)
-                buffer_offset = 0
-        if buffer_offset:
-            digest.update(memoryview(hash_buffer)[:buffer_offset])
+        hasher_state = _archive_hashers.pop(str(archive["id"]), None)
+        if hasher_state is None:
+            # Compatibility fallback for an archive created by an older running
+            # bridge instance or a caller that did not initialize the hasher.
+            digest = hashlib.sha256()
+            cursor = db.execute(
+                "SELECT time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence",
+                (archive["id"],),
+            )
+            hash_buffer = bytearray(_TICK_HASH_RECORD.size * _TICK_HASH_RECORDS_PER_BUFFER)
+            buffer_offset = 0
+            for row in cursor:
+                _TICK_HASH_RECORD.pack_into(hash_buffer, buffer_offset, *row)
+                buffer_offset += _TICK_HASH_RECORD.size
+                if buffer_offset == len(hash_buffer):
+                    digest.update(hash_buffer)
+                    buffer_offset = 0
+            if buffer_offset:
+                digest.update(memoryview(hash_buffer)[:buffer_offset])
+        else:
+            digest, hash_buffer, buffer_offset = hasher_state
+            if buffer_offset:
+                digest.update(memoryview(hash_buffer)[:buffer_offset])
         manifest = json.loads(archive["manifest_json"])
         manifest["completeness"] = "all_requested_ranges_returned"
         manifest["tick_hash_encoding"] = "little-endian:<qdddqdq>"
@@ -282,6 +309,7 @@ def set_archive_state(archive_id: str, status: str, error: str | None = None) ->
             "UPDATE archives SET status=?,error=?,manifest_json=?,updated_at=? WHERE id=? AND status='importing'",
             (status, (error or "")[:1000] or None, json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), _now(), archive_id),
         )
+    _archive_hashers.pop(archive_id, None)
 
 
 def _archive_payload(row: sqlite3.Row) -> dict[str, Any]:

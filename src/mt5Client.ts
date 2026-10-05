@@ -294,6 +294,15 @@ export type ReplayImportJob = {
   completed_through_ms: number
   tick_count: number
   progress: number
+  stage?: 'queued' | 'mt5_fetch' | 'sqlite_write' | 'sha256_finalize' | 'complete'
+  range_from_ms?: number | null
+  range_to_ms?: number | null
+  last_chunk_fetch_ms?: number | null
+  last_chunk_write_ms?: number | null
+  fetch_total_ms?: number
+  write_total_ms?: number
+  finalize_ms?: number | null
+  ticks_per_second?: number
   error: string | null
   archive: ReplayArchive | null
 }
