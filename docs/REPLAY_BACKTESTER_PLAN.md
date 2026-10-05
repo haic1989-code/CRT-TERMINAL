@@ -13,6 +13,13 @@ Tester nie wysyła zleceń do MT5. Nie uruchamia plików `.mq5` ani `.ex5`.
 
 Obecny start CRT wymaga gotowego mostu MT5 i świeżej historii wykresu. Przed udostępnieniem replay trzeba rozdzielić gotowość aplikacji od gotowości brokera: moduły i updater uruchamiają się normalnie, a brak MT5 przełącza terminal w stan offline. W tym stanie użytkownik może otworzyć wcześniej zapisane archiwum i odtwarzać test. Import nowej historii wymaga działającego MT5. Nie wyświetlamy fikcyjnego statusu „MT5 gotowe” ani przykładowych danych.
 
+## Wejście do FX Replay i jego wygląd
+
+- W głównym pasku CRT dodajemy widoczny przycisk `FX REPLAY`, dostępny niezależnie od stanu połączenia z MT5.
+- Przycisk otwiera dedykowany widok odtwarzacza z wyborem archiwum, skryptu i zakresu testu. Wyjście z replay wraca do terminalu bez zmiany ustawień połączenia na żywo.
+- Tło odtwarzacza korzysta z języka wizualnego CRT Terminal: ciemny granatowo-czarny ekran, chłodna niebieska poświata monitora, delikatna siatka i subtelne linie CRT. Typografia, ramki i akcenty zielono-cyjanowe pozostają spójne z konsolą terminalu; tekst i wykres mają zachować czytelność.
+- Widok nie pokazuje panelu egzekucji DEMO/live. Wszystkie zlecenia w FX Replay są wyłącznie symulowane.
+
 ## Przepływ danych
 
 1. Użytkownik wybiera symbol, interwał wykresu oraz zakres dat.
@@ -61,6 +68,7 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 
 ### 3. Odtwarzacz na wykresie
 
+- Dodać przycisk `FX REPLAY` do głównego paska CRT i dedykowany widok odtwarzacza w tle CRT.
 - Wyświetlać świece agregowane z ticków archiwum, zachowując rzeczywisty strumień ticków jako wejście silnika.
 - Dodać Start/Pauza, krokowanie, regulację szybkości i przewijanie w obie strony.
 - Rysować Entry/Exit oraz wynik w pipsach/punktach i podsumowanie transakcji.
