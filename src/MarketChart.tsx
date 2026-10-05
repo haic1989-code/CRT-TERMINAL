@@ -410,6 +410,7 @@ export function MarketChart({
   managedOrder = null,
   cancelRequest,
   onPlannerChange,
+  onPlannerPlaced,
   onBarsChange,
   onDrawingComplete,
   volumeVisible = true,
@@ -447,6 +448,7 @@ export function MarketChart({
   managedOrder?: ManagedOrderHighlight | null
   cancelRequest?: { nonce: number } | null
   onPlannerChange?: (planner: PlannerSnapshot | null) => void
+  onPlannerPlaced?: () => void
   onBarsChange?: (bars: Array<{ time: number; open: number; high: number; low: number; close: number; tickVolume?: number }>) => void
   onDrawingComplete?: (result: 'saved' | 'tools') => void
   volumeVisible?: boolean
@@ -606,6 +608,7 @@ export function MarketChart({
     plannerTimeRef.current = { start, end }
     plannerSideRef.current = side
     setPlanner(next)
+    onPlannerPlaced?.()
     setPlannerTime({ start, end })
     setPlannerSide(side)
     setPlannerDirty(false)
@@ -1705,6 +1708,7 @@ export function MarketChart({
       plannerTimeRef.current = timeRange
       plannerSideRef.current = side
       setPlanner(plannerState)
+      onPlannerPlaced?.()
       setPlannerTime(timeRange)
       setPlannerSide(side)
       setPlannerDirty(false)

@@ -219,3 +219,12 @@
 
 /* Keep CRT console text clear of the glass edge at desktop DPI scales. */
 .sf-matrix .sf-right-column.matrix-text-column > .matrix-command-deck{padding-left:clamp(28px,2vw,42px);padding-right:clamp(22px,1.5vw,32px);}
+
+/* Luna asks for an order only after a chart plan is placed. */
+.sf-matrix .matrix-command-deck .luna-trade-confirm{margin-top:14px;padding:12px;border:1px solid #36d5a0;background:linear-gradient(135deg,#0b2637ee,#071624f5);box-shadow:0 0 16px #27c89518;}
+.sf-matrix .matrix-command-deck .luna-trade-confirm h3{margin:0 0 8px;color:var(--green);font-size:12px;letter-spacing:.08em;}
+.sf-matrix .matrix-command-deck .luna-trade-confirm .execution-review{margin-top:8px;border:0;padding-top:0;}
+.sf-matrix .matrix-command-deck .luna-trade-confirm .execution-review dl>div{grid-template-columns:7ch minmax(0,1fr);font-size:11px;}
+.sf-matrix .matrix-command-deck .execution-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
+.sf-matrix .matrix-command-deck .execution-actions button{margin:0;min-height:38px;}
+.sf-matrix .matrix-command-deck .demo-execution .execution-cancel{color:#ff8c9d;border-color:#8b4054;background:#261521;}

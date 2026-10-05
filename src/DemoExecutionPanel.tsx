@@ -4,23 +4,20 @@ import { executionStatus, prepareExecution, readExecution, sendExecution, unreso
 
 const STORAGE = 'crt-terminal:pending-execution:v1'
 const orderTypeLabels: Record<number, string> = { 0: 'BUY MARKET', 1: 'SELL MARKET', 2: 'BUY LIMIT', 3: 'SELL LIMIT', 4: 'BUY STOP', 5: 'SELL STOP', 6: 'BUY STOP LIMIT', 7: 'SELL STOP LIMIT' }
-const stateLabels = { PREPARED: 'Sprawdzone', INTENT: 'Weryfikuję przed wysyłką', SUBMITTING: 'Wysyłam', ACKNOWLEDGED: 'Odpowiedź brokera · uzgadniam', UNKNOWN: 'Wynik niepotwierdzony', REJECTED: 'Odrzucone', RECONCILED: 'Wynik uzgodniony z MT5' }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Nie mogę potwierdzić wyniku. Sprawdźmy go w MT5.'
-type Props = { feed: MarketFeedState; planner: PlannerSnapshot | null; volume: number | null; unsupportedManagement: boolean }
-/** Only explicit user clicks can prepare or submit. Recovery calls are read-only. */
-export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagement }: Props) {
-  const [kind, setKind] = useState<'market' | 'buy_limit' | 'sell_limit'>('market')
-  const [deviation, setDeviation] = useState(20)
+type Props = { feed: MarketFeedState; planner: PlannerSnapshot | null; volume: number | null; unsupportedManagement: boolean; confirmationOpen: boolean; onCancel: () => void; onComplete: (message: string) => void }
+/** A single explicit Luna confirmation runs the existing DEMO preflight and one-shot send path. */
+export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagement, confirmationOpen, onCancel, onComplete }: Props) {
   const [status, setStatus] = useState<ExecutionStatus | null>(null)
   const [record, setRecord] = useState<ExecutionRecord | null>(null)
-  const [notice, setNotice] = useState('Sprawdzam konto DEMO i dziennik wysyłki…')
-  const [busy, setBusy] = useState(false), [now, setNow] = useState(Date.now())
-  const lock = useRef(false), mounted = useRef(true), preparedKey = useRef('')
+  const [notice, setNotice] = useState('Sprawdzam uprawnienia konta DEMO…')
+  const [busy, setBusy] = useState(false)
+  const lock = useRef(false), mounted = useRef(true)
   const recoveryId = useRef<string | null>(null)
   const account = feed.account
-  const planKey = JSON.stringify([feed.symbol, account?.login, account?.server, planner, volume, kind, deviation, unsupportedManagement])
+  const kind = planner?.side === 'long' ? 'buy_limit' : 'sell_limit'
+  const planKey = JSON.stringify([feed.symbol, account?.login, account?.server, planner, volume, kind, unsupportedManagement])
   const currentKey = useRef(planKey); currentKey.current = planKey
-  const prepared = record?.state === 'PREPARED'
   const unresolved = Boolean(record && unresolvedExecution(record))
   useEffect(() => {
     mounted.current = true
@@ -40,77 +37,95 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
           if (mounted.current) { setRecord(result); setNotice(result.message) }
           if (!unresolvedExecution(result)) {
             recoveryId.current = null
-            try { if (localStorage.getItem(STORAGE) === id) localStorage.removeItem(STORAGE) } catch { /* retain durable server journal */ }
+            try { if (localStorage.getItem(STORAGE) === id) localStorage.removeItem(STORAGE) } catch { /* server journal remains authoritative */ }
+            if (result.state === 'RECONCILED') onComplete(result.message)
           }
-        } else setNotice(current => current === 'Sprawdzam konto DEMO i dziennik wysyłki…' ? 'Mogę sprawdzić Twój plan. Wysyłam dopiero po osobnym potwierdzeniu.' : current)
+        } else setNotice(current => current === 'Sprawdzam uprawnienia konta DEMO…' ? 'Luna › Plan wyśle się dopiero po Twoim potwierdzeniu.' : current)
       } catch (error) { if (!cancelled && mounted.current) { setStatus(null); setNotice(message(error)) } }
       finally { lock.current = false }
     }
     void refresh()
     const timer = window.setInterval(() => void refresh(), 5000)
-    const clock = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => { cancelled = true; mounted.current = false; window.clearInterval(timer); window.clearInterval(clock) }
+    return () => { cancelled = true; mounted.current = false; window.clearInterval(timer) }
   }, [account?.login, account?.server])
-  const block = !status ? 'Czekam na potwierdzenie uprawnień mostu.' : !status.enabled ? status.reason || 'Najpierw uzgodnię poprzednią wysyłkę z MT5.' : !planner ? 'Wybierz DŁUGA lub KRÓTKA i wskaż wejście na wykresie.' : kind === 'buy_limit' && planner.side !== 'long' ? 'Buy Limit wymaga planu DŁUGA.' : kind === 'buy_limit' && feed.ask !== undefined && planner.entry >= feed.ask ? 'Cena Buy Limit musi leżeć poniżej bieżącego Ask.' : kind === 'sell_limit' && planner.side !== 'short' ? 'Sell Limit wymaga planu KRÓTKA.' : kind === 'sell_limit' && feed.bid !== undefined && planner.entry <= feed.bid ? 'Cena Sell Limit musi leżeć powyżej bieżącego Bid.' : !feed.marketSession?.available ? 'Uruchom pomocnik CRTMarketSessions w MT5, aby potwierdzić godziny sesji.' : feed.marketSession.trade_open === false ? 'Sesja handlowa jest zamknięta. Zlecenia DEMO są zablokowane do otwarcia.' : unsupportedManagement ? 'Ta wersja wysyła pełny TP i SL. Wyłącz TP1–TP3 oraz BE przed wysyłką.' : feed.status !== 'live' ? feed.status === 'closed' ? 'Rynek jest zamknięty. Zlecenia DEMO są zablokowane do otwarcia sesji.' : 'Poczekajmy na aktualne notowanie.' : !volume || volume <= 0 ? 'Ustaw poprawny wolumen.' : ''
+
+  const block = !status ? 'Czekam na potwierdzenie uprawnień mostu.'
+    : !status.enabled ? status.reason || 'Najpierw uzgodnię poprzednią wysyłkę z MT5.'
+      : !planner ? 'Wskaż wejście, Stop Loss i Take Profit na wykresie.'
+        : !account || !feed.symbol ? 'Czekam na symbol i konto z MT5.'
+          : kind === 'buy_limit' && feed.ask !== undefined && planner.entry >= feed.ask ? 'Dla BUY LIMIT wejście musi być poniżej bieżącego Ask.'
+            : kind === 'sell_limit' && feed.bid !== undefined && planner.entry <= feed.bid ? 'Dla SELL LIMIT wejście musi być powyżej bieżącego Bid.'
+              : !feed.marketSession?.available ? 'Brak potwierdzonych godzin sesji symbolu w MT5.'
+                : feed.marketSession.trade_open === false ? 'Sesja handlowa jest zamknięta. Zlecenie pozostaje zablokowane.'
+                  : unsupportedManagement ? 'Przed wysyłką wyłącz TP1–TP3 oraz BE. Obsługuję pełny TP i SL.'
+                    : feed.status !== 'live' ? feed.status === 'closed' ? 'Rynek jest zamknięty. Poczekajmy na otwarcie sesji.' : 'Poczekajmy na aktualne notowanie.'
+                      : !volume || volume <= 0 ? 'Ustaw poprawny wolumen.' : !Number.isFinite(planner.entry) || !Number.isFinite(planner.sl) || !Number.isFinite(planner.tp) ? 'Sprawdź ceny wejścia, SL i TP.' : ''
+
   const run = async (action: () => Promise<void>) => {
     if (lock.current) return
     lock.current = true; setBusy(true)
     try { await action() } catch (error) { setNotice(message(error)) }
     finally { lock.current = false; if (mounted.current) setBusy(false) }
   }
-  const prepare = () => void run(async () => {
-    if (block || !planner || !volume || !account || !feed.symbol) return
+  const confirm = () => void run(async () => {
+    if (block || !planner || !volume || !account || !feed.symbol || unresolved) return
     const key = currentKey.current
     const quote = planner.side === 'long' ? feed.ask : feed.bid
     if (!quote || !Number.isFinite(quote)) throw new Error('Nie mam aktualnej ceny Bid/Ask. Poczekajmy na notowanie.')
-    const result = await prepareExecution({ clientRequestId: crypto.randomUUID(), accountLogin: account.login, accountServer: account.server,
-      symbol: feed.symbol, side: planner.side === 'long' ? 'buy' : 'sell', kind, volume, entry: planner.entry, sl: planner.sl, tp: planner.tp, quote, deviationPoints: deviation })
-    preparedKey.current = key
+    const clientRequestId = crypto.randomUUID()
+    // Save the id before prepare: if the bridge response is interrupted, recovery can only read this request.
+    localStorage.setItem(STORAGE, clientRequestId)
+    if (localStorage.getItem(STORAGE) !== clientRequestId) throw new Error('Nie udało mi się zapisać identyfikatora zlecenia. Niczego nie wysłałam.')
+    recoveryId.current = clientRequestId
+    setNotice('Luna › Sprawdzam konto DEMO, poziomy i ryzyko przed wysyłką…')
+    const prepared = await prepareExecution({ clientRequestId, accountLogin: account.login, accountServer: account.server,
+      symbol: feed.symbol, side: planner.side === 'long' ? 'buy' : 'sell', kind, volume, entry: planner.entry, sl: planner.sl, tp: planner.tp, quote, deviationPoints: 20 })
+    setRecord(prepared); setNotice(prepared.message)
+    if (prepared.state !== 'PREPARED') return
+    if (currentKey.current !== key || Date.now() >= prepared.expiresAt) {
+      setNotice('Luna › Plan zmienił się lub kontrola wygasła. Nie wysłałam zlecenia; sprawdź plan ponownie.')
+      return
+    }
+    setRecord({ ...prepared, state: 'SUBMITTING' })
+    setNotice('Luna › Kontrole przeszły. Wysyłam zlecenie DEMO jeden raz…')
+    let result: ExecutionRecord
+    try { result = await sendExecution(prepared) }
+    catch (error) {
+      setRecord({ ...prepared, state: 'UNKNOWN' })
+      setNotice(`Luna › Wynik wysyłki jest niepewny. Nie ponawiam zlecenia. ${message(error)}`)
+      return
+    }
     setRecord(result); setNotice(result.message)
-  })
-  const send = () => void run(async () => {
-    if (!record || record.state !== 'PREPARED' || block || preparedKey.current !== currentKey.current || Date.now() >= record.expiresAt) return
-    // Persist recovery ID before any network call. A failed storage write blocks submission.
-    localStorage.setItem(STORAGE, record.clientRequestId)
-    if (localStorage.getItem(STORAGE) !== record.clientRequestId) throw new Error('Nie udało mi się zapisać identyfikatora wysyłki. Nie wysłałam zlecenia.')
-    recoveryId.current = record.clientRequestId
-    setRecord({ ...record, state: 'SUBMITTING' }); setNotice('Wysyłam jeden raz. Przy przerwanym połączeniu sprawdzę wynik bez ponawiania.')
-    try {
-      const result = await sendExecution(record)
-      setRecord(result); setNotice(result.message)
-      if (!unresolvedExecution(result)) {
-        recoveryId.current = null
-        try { localStorage.removeItem(STORAGE) } catch { /* server result is already known */ }
-      }
-    } catch (error) {
-      setRecord({ ...record, state: 'UNKNOWN' })
-      setNotice(`Nie potwierdziłam wyniku wysyłki. Nie ponawiam zlecenia. ${message(error)}`)
+    if (!unresolvedExecution(result)) {
+      recoveryId.current = null
+      try { localStorage.removeItem(STORAGE) } catch { /* server result is already known */ }
     }
     try { setStatus(await executionStatus()) } catch { setStatus(null) }
+    if (result.state === 'RECONCILED') onComplete(result.message)
   })
   const check = () => void run(async () => {
     const id = record?.clientRequestId || recoveryId.current
     if (!id) return
     const result = await readExecution(id)
     setRecord(result); setNotice(result.message)
-    if (!unresolvedExecution(result)) { recoveryId.current = null; localStorage.removeItem(STORAGE) }
+    if (!unresolvedExecution(result)) {
+      recoveryId.current = null
+      try { localStorage.removeItem(STORAGE) } catch { /* server result is already known */ }
+      if (result.state === 'RECONCILED') onComplete(result.message)
+    }
     setStatus(await executionStatus())
   })
-  const seconds = record ? Math.max(0, Math.ceil((record.expiresAt - now) / 1000)) : 0
-  return <section className="demo-execution" aria-label="Ręczna egzekucja DEMO">
-    <h3>06 EGZEKUCJA · TYLKO DEMO</h3>
-    <p className="execution-luna" role="status">Luna › {notice}</p>
-    {account && <p className="subline">Konto {account.login} · {account.server}</p>}
-    <div className="execution-options"><label>Rodzaj <select value={kind} disabled={busy || unresolved} onChange={event => setKind(event.target.value as typeof kind)}><option value="market">Po rynku · Ask / Bid</option><option value="buy_limit" disabled={planner?.side !== 'long'}>Buy Limit · tylko DŁUGA</option><option value="sell_limit" disabled={planner?.side !== 'short'}>Sell Limit · tylko KRÓTKA</option></select></label><label>Odchylenie (punkty) <input type="number" min="0" max="100" step="1" value={deviation} disabled={busy || unresolved} onChange={event => setDeviation(Math.max(0, Math.min(100, Math.round(Number(event.target.value) || 0))))}/></label></div>
-    {block && <p className="execution-luna dim">Luna › {block}</p>}
-    {!unresolved && <button className="execution-check" disabled={busy || Boolean(block)} onClick={prepare}>Sprawdź zlecenie DEMO</button>}
-    {record && <div className="execution-review">
-      <strong>{record.request.symbol} · {orderTypeLabels[record.request.type] || 'ZLECENIE'}</strong>
-      <dl>{[['Lot', record.request.volume], ['Wejście', record.request.price], ['SL', record.request.sl], ['Pełny TP', record.request.tp], ['Ryzyko', `${record.risk.loss.toFixed(2)} ${record.risk.currency} (${record.risk.riskPercent.toFixed(2)}%)`], ['Margin', `${record.risk.margin.toFixed(2)} ${record.risk.currency}`], ['Stan', stateLabels[record.state]]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-      {record.result && <p className="subline">{record.result.order ? `Zlecenie #${record.result.order} · ` : ''}{record.result.deal ? `Transakcja #${record.result.deal} · ` : ''}{record.result.filledVolume !== undefined ? `Wykonano ${record.result.filledVolume} lota` : ''}</p>}
-      {prepared && <><p className="execution-luna">Luna › {preparedKey.current !== planKey ? 'Plan się zmienił. Sprawdź go ponownie.' : seconds > 0 ? `Podsumowanie jest ważne jeszcze ${seconds} s. Sprawdź kierunek, SL i TP.` : 'Podsumowanie wygasło. Sprawdź plan ponownie.'}</p><button className="execution-send" disabled={busy || Boolean(block) || preparedKey.current !== planKey || seconds === 0} onClick={send}>Wyślij {record.request.volume} lota · DEMO</button></>}
-      {unresolved && <button disabled={busy} onClick={check}>Sprawdź wynik w MT5 · bez ponawiania</button>}
+  if (!confirmationOpen && !unresolved) return null
+  return <section className="demo-execution luna-trade-confirm" aria-label="Potwierdzenie zlecenia DEMO przez Lunę">
+    <h3>{unresolved ? 'LUNA · UZGADNIAM WYNIK' : 'LUNA · POTWIERDZENIE POZYCJI'}</h3>
+    <p className="execution-luna" role="status">Luna › {unresolved ? notice : `Czy wysłać ${kind === 'buy_limit' ? 'BUY LIMIT' : 'SELL LIMIT'} na koncie DEMO?`}</p>
+    {confirmationOpen && planner && <div className="execution-review">
+      <strong>{feed.symbol || 'SYMBOL'} · {kind === 'buy_limit' ? 'BUY LIMIT' : 'SELL LIMIT'} · {planner.side === 'long' ? 'DŁUGA' : 'KRÓTKA'}</strong>
+      <dl>{[['Wolumen', `${volume ?? '—'} lot`], ['Wejście', planner.entry], ['SL', planner.sl], ['Pełny TP', planner.tp]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+      {block && <p className="execution-luna dim">Luna › {block}</p>}
+      <div className="execution-actions"><button className="execution-send" disabled={busy || Boolean(block) || unresolved} onClick={confirm}>Potwierdź pozycję · wyślij DEMO</button><button className="execution-cancel" disabled={busy || unresolved} onClick={onCancel}>Anuluj rysowanie</button></div>
     </div>}
-    <p className="subline">Luna › TP1–TP3 i BE pozostają planowaniem. Pozycje zamykaj bezpośrednio w MT5.</p>
+    {unresolved && <><p className="execution-luna dim">Luna › Nie wysyłam ponownie. Najpierw odczytam istniejące zlecenie z dziennika MT5.</p><button disabled={busy} onClick={check}>Sprawdź wynik w MT5</button></>}
+    {record?.state === 'REJECTED' && <p className="execution-luna dim">Luna › MT5 odrzucił zlecenie. Popraw plan i potwierdź go ponownie albo anuluj rysowanie.</p>}
   </section>
 }

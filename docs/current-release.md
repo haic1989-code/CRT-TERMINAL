@@ -1,9 +1,8 @@
-# CRT Terminal 0.1.24
+# CRT Terminal 0.1.25
 
-- Wybór instrumentu w trybie CRT jest teraz wiadomością Luny z szybkimi symbolami i wyszukiwaniem nazw dostępnych u brokera. Stary panel wyboru pozostaje dostępny wyłącznie w trybie legacy.
-- Planer odczytuje minimum, krok, limit wolumenu i rozmiar kontraktu z metadanych MT5. Dla BTC pokazuje przeliczenie wybranego lota na jednostki waluty bazowej.
-- Zaokrąglanie wolumenu do kroku brokera zaczyna się od jego minimalnego wolumenu, a nie od zera.
-- Sesje `00:00–00:00` raportowane przez brokera są rozpoznawane jako całodobowe; zamknięta sesja nie jest już mylona z rozłączonym MT5.
-- Zmiany nie wysyłają zleceń. Zabezpieczenia egzekucji wyłącznie DEMO pozostają bez zmian.
+- Rysowanie planu pozycji otwiera krótkie potwierdzenie Luny zamiast stale widocznego panelu egzekucji.
+- DŁUGA automatycznie ustawia BUY LIMIT, a KRÓTKA SELL LIMIT. „Potwierdź pozycję” wykonuje kontrolę DEMO i ryzyka, a następnie wysyła zlecenie jednym, jawnym kliknięciem.
+- Luna pokazuje symbol, wolumen, wejście, SL i pełny TP oraz wyjaśnia blokady przed wysyłką. „Anuluj rysowanie” usuwa plan.
+- Zachowane są istniejące zabezpieczenia konta DEMO, kontroli brokera, dziennika idempotencji i uzgadniania niepewnych odpowiedzi MT5. Niepewnego zlecenia terminal nie ponawia.
 
 Aktualizacje nadal wymagają jawnego kliknięcia w terminalu.
