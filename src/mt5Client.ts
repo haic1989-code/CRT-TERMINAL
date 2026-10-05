@@ -349,6 +349,12 @@ export function fetchReplayStrategies(signal?: AbortSignal) {
   return localFetch<{ api_version: number; values: ReplayStrategy[] }>('/v1/replay/strategies', signal)
 }
 
+export function fetchReplayStrategySource(strategyId: string, signal?: AbortSignal) {
+  return localFetch<{ id: string; name: string; api_version: number; source: string }>(
+    `/v1/replay/strategies/${encodeURIComponent(strategyId)}/source`, signal,
+  )
+}
+
 export function saveReplayStrategy(name: string, source: string, signal?: AbortSignal) {
   return localRequest<ReplayStrategy>('/v1/replay/strategies', {
     method: 'POST', cache: 'no-store', signal,

@@ -151,6 +151,7 @@ def create_archive(
     from_ms: int,
     to_ms: int,
     symbol_info: dict[str, Any],
+    account_currency: str = "",
 ) -> str:
     archive_id = str(uuid.uuid4())
     now = _now()
@@ -163,6 +164,7 @@ def create_archive(
         "broker": broker,
         "server": server,
         "timezone": "UTC",
+        "account_currency": account_currency.upper(),
         "from_ms": from_ms,
         "to_ms": to_ms,
         "symbol_info": symbol_info,
@@ -320,7 +322,7 @@ def save_strategy(name: str, source: str) -> dict[str, Any]:
     with _db_lock, _connection() as db:
         db.execute(
             "INSERT INTO strategies(id,name,source,sha256,api_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-            (strategy_id, name, source, digest, 1, now, now),
+            (strategy_id, name, source, digest, 2, now, now),
         )
     return get_strategy(strategy_id) or {}
 

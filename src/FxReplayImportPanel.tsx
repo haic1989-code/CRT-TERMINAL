@@ -7,6 +7,7 @@ import {
   fetchReplayRun,
   fetchReplayRunEvents,
   fetchReplayStrategies,
+  fetchReplayStrategySource,
   fetchReplayTicks,
   startReplayImport,
   startReplayRun,
@@ -89,29 +90,62 @@ const statusLabel: Record<ReplayArchive['status'], string> = {
 }
 
 const sampleStrategy = `def on_start(context):
-    context.state["prices"] = []
-    context.state["total"] = 0.0
     context.state["position"] = None
+    context.state["last_bar"] = None
+    context.state["previous_fast"] = None
+    context.state["previous_slow"] = None
 
 def on_tick(context, tick):
-    if tick["bid"] <= 0 or tick["ask"] <= 0:
+    if not context.bars:
         return
-    prices = context.state["prices"]
-    prices.append((tick["bid"] + tick["ask"]) / 2)
-    context.state["total"] += prices[-1]
-    period = max(2, min(500, int(context.params.get("period", 30))))
-    if len(prices) > period:
-        context.state["total"] -= prices.pop(0)
-    if len(prices) < period:
+    bar = context.bars[-1]
+    if context.state["last_bar"] == bar["time_msc"]:
         return
-    average = context.state["total"] / period
-    market = (tick["bid"] + tick["ask"]) / 2
-    position = context.state["position"]
-    if position is None and market > average:
-        context.state["position"] = context.buy(context.spec["volume_min"])
-    elif position is not None and market < average:
-        context.close(position)
-        context.state["position"] = None
+    context.state["last_bar"] = bar["time_msc"]
+    fast = context.ema(int(context.params.get("fast_period", 12)))
+    slow = context.ema(int(context.params.get("slow_period", 26)))
+    atr = context.atr(int(context.params.get("atr_period", 14)))
+    if fast is None or slow is None or atr is None or atr <= 0:
+        return
+
+    position_id = context.state["position"]
+    position = next((item for item in context.positions if item["id"] == position_id), None)
+    if position is not None:
+        trail = atr * float(context.params.get("trail_atr", 2.0))
+        if position["side"] == "buy":
+            next_sl = context.round_price(bar["close"] - trail, "down")
+            if position["sl"] is not None and next_sl > position["sl"] and next_sl < context.bid:
+                context.modify_position(position_id, sl=next_sl)
+        else:
+            next_sl = context.round_price(bar["close"] + trail, "up")
+            if position["sl"] is not None and next_sl < position["sl"] and next_sl > context.ask:
+                context.modify_position(position_id, sl=next_sl)
+
+    previous_fast = context.state["previous_fast"]
+    previous_slow = context.state["previous_slow"]
+    crossed_up = previous_fast is not None and previous_slow is not None and previous_fast <= previous_slow and fast > slow
+    crossed_down = previous_fast is not None and previous_slow is not None and previous_fast >= previous_slow and fast < slow
+    context.state["previous_fast"] = fast
+    context.state["previous_slow"] = slow
+    if position is not None or not crossed_up and not crossed_down:
+        return
+
+    stop_distance = atr * float(context.params.get("stop_atr", 2.0))
+    target_r = float(context.params.get("target_r", 2.0))
+    if stop_distance <= 0 or target_r <= 0:
+        return
+    if crossed_up:
+        entry = context.ask + float(context.params.get("slippage_points", 0)) * float(context.spec.get("point", 0))
+        stop = context.round_price(entry - stop_distance, "down")
+        target = context.round_price(entry + abs(entry - stop) * target_r, "up")
+        volume = context.risk_volume(abs(entry - stop))
+        context.state["position"] = context.buy(volume, sl=stop, tp=target)
+    elif crossed_down:
+        entry = context.bid - float(context.params.get("slippage_points", 0)) * float(context.spec.get("point", 0))
+        stop = context.round_price(entry + stop_distance, "up")
+        target = context.round_price(entry - abs(stop - entry) * target_r, "down")
+        volume = context.risk_volume(abs(stop - entry))
+        context.state["position"] = context.sell(volume, sl=stop, tp=target)
 
 def on_stop(context):
     pass
@@ -128,7 +162,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const [strategySource, setStrategySource] = useState(sampleStrategy)
   const [selectedArchiveId, setSelectedArchiveId] = useState('')
   const [selectedStrategyId, setSelectedStrategyId] = useState('')
-  const [paramsText, setParamsText] = useState('{\n  "period": 30\n}')
+  const [paramsText, setParamsText] = useState('{\n  "timeframe": "M5",\n  "initial_balance": 10000,\n  "risk_fraction": 0.005,\n  "fast_period": 12,\n  "slow_period": 26,\n  "atr_period": 14,\n  "stop_atr": 2,\n  "target_r": 2,\n  "trail_atr": 2,\n  "commission_per_lot_side": 0,\n  "slippage_points": 0\n}')
   const [run, setRun] = useState<ReplayRun | null>(null)
   const [events, setEvents] = useState<ReplayRunEvent[]>([])
   const [ticks, setTicks] = useState<ReplayTick[]>([])
@@ -147,6 +181,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const activeJob = job?.status === 'starting' || job?.status === 'importing'
   const completeCount = useMemo(() => archives.filter(archive => archive.status === 'complete').length, [archives])
   const selectedArchive = archives.find(archive => archive.id === selectedArchiveId)
+  const selectedStrategy = strategies.find(strategy => strategy.id === selectedStrategyId)
 
   const refreshArchives = async () => {
     try {
@@ -161,7 +196,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
     try {
       const result = await fetchReplayStrategies()
       setStrategies(result.values)
-      if (!selectedStrategyId && result.values[0]) setSelectedStrategyId(result.values[0].id)
+      if (!selectedStrategyId && result.values[0]) setSelectedStrategyId(result.values.find(strategy => strategy.api_version === 2)?.id || '')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Nie mogę odczytać lokalnych strategii.')
     }
@@ -252,6 +287,25 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
       setEvents([])
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Nie udało się zapisać strategii Python.')
+    }
+  }
+
+  const selectStrategy = async (strategyId: string) => {
+    setSelectedStrategyId(strategyId)
+    const strategy = strategies.find(item => item.id === strategyId)
+    if (!strategy || strategy.api_version === 2) return
+    setError('')
+    try {
+      const saved = await fetchReplayStrategySource(strategyId)
+      setStrategyName(`${saved.name} · API v2`)
+      setStrategySource(saved.source)
+      setSelectedStrategyId('')
+      setRun(null)
+      setEvents([])
+      setError('Luna › Stary skrypt wczytany do edytora. Zapisz go jako nową wersję API v2, aby uruchomić symulację.')
+    } catch (reason) {
+      setSelectedStrategyId('')
+      setError(reason instanceof Error ? reason.message : 'Nie mogę wczytać źródła starego skryptu.')
     }
   }
 
@@ -389,24 +443,24 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
           </article>)}
         </section>
         <section className="fx-replay-strategies" aria-labelledby="fx-replay-strategy-title">
-          <div className="fx-replay-section-title" id="fx-replay-strategy-title"><span>03</span> SKRYPT STRATEGII <small>PYTHON API v1</small></div>
+          <div className="fx-replay-section-title" id="fx-replay-strategy-title"><span>03</span> SKRYPT STRATEGII <small>PYTHON API v2</small></div>
           <label>NAZWA STRATEGII<input value={strategyName} maxLength={80} onChange={event => setStrategyName(event.target.value)} /></label>
           <label>EDYTOR KODU PYTHON<textarea spellCheck={false} value={strategySource} onChange={event => setStrategySource(event.target.value)} /></label>
           <div className="fx-replay-strategy-actions">
             <button type="button" onClick={() => void addStrategy()} disabled={!strategyName.trim() || !strategySource.trim()}>ZAPISZ SKRYPT</button>
-            <label className="fx-replay-select-label">ZAPISANY SKRYPT<select value={selectedStrategyId} onChange={event => setSelectedStrategyId(event.target.value)}><option value="">Wybierz strategię</option>{strategies.map(strategy => <option key={strategy.id} value={strategy.id}>{strategy.name} · v{strategy.api_version}</option>)}</select></label>
+            <label className="fx-replay-select-label">ZAPISANY SKRYPT<select value={selectedStrategyId} onChange={event => void selectStrategy(event.target.value)}><option value="">Wybierz strategię</option>{strategies.map(strategy => <option key={strategy.id} value={strategy.id}>{strategy.name} · v{strategy.api_version}{strategy.api_version !== 2 ? ' · wczytaj do migracji' : ''}</option>)}</select></label>
           </div>
           <label>PARAMETRY JSON<textarea className="fx-replay-params" spellCheck={false} value={paramsText} onChange={event => setParamsText(event.target.value)} /></label>
-          <p className="fx-replay-note">Luna › Skrypt działa lokalnie w osobnym procesie. To kod użytkownika, nie uruchamiaj niezaufanych plików. Symulacja nie wysyła zleceń do MT5.</p>
+          <p className="fx-replay-note">Luna › API v2 udostępnia zamknięte świece, SMA/EMA/ATR, wolumen liczony od SL oraz modyfikację stopów. Start: 10 000 {String(selectedArchive?.manifest?.account_currency || 'waluty archiwum')}, ryzyko 0,5% na transakcję. Brak waluty lub wartości ticka blokuje sizing. Symulacja nie wysyła zleceń do MT5.</p>
           <div className="fx-replay-actions">
-            <button type="button" disabled={!selectedArchiveId || !selectedStrategyId || !!run && ['queued', 'running'].includes(run.status)} onClick={() => void simulate()}>URUCHOM SYMULACJĘ</button>
+            <button type="button" disabled={!selectedArchiveId || !selectedStrategyId || selectedStrategy?.api_version !== 2 || !!run && ['queued', 'running'].includes(run.status)} onClick={() => void simulate()}>URUCHOM SYMULACJĘ</button>
             {run && ['queued', 'running'].includes(run.status) && <button type="button" className="secondary" onClick={() => void cancelRun()}>ANULUJ</button>}
           </div>
           {run && <div className={'fx-replay-job fx-replay-job--' + run.status} role="status" aria-live="polite">
             <div><b>{run.status === 'complete' ? 'Luna › Symulacja zakończona.' : run.status === 'failed' ? 'Luna › Skrypt zakończył się błędem.' : run.status === 'cancelled' ? 'Luna › Symulacja anulowana.' : 'Luna › Przetwarzam ticki…'}</b><span>{run.progress_ticks.toLocaleString('pl-PL')} / {run.total_ticks.toLocaleString('pl-PL')}</span></div>
             {['queued', 'running'].includes(run.status) && <progress max={Math.max(1, run.total_ticks)} value={run.progress_ticks} />}
             {run.error && <small>{run.error}</small>}
-            {run.report && <div className="fx-replay-metrics"><span>Zamknięcia <b>{String(run.report.closed_exits ?? 0)}</b></span><span>Wygrane <b>{String(run.report.winning_exits ?? 0)}</b></span><span>Straty <b>{String(run.report.losing_exits ?? 0)}</b></span><span>Wynik ważony punktami <b>{Number(run.report.net_points_volume ?? 0).toLocaleString('pl-PL')}</b></span></div>}
+            {run.report && <div className="fx-replay-metrics"><span>Zamknięcia <b>{String(run.report.closed_exits ?? 0)}</b></span><span>Dodatnie <b>{String(run.report.winning_exits ?? 0)}</b></span><span>Ujemne <b>{String(run.report.losing_exits ?? 0)}</b></span><span>Ruch ceny ważony punktami <b>{Number(run.report.net_points_volume ?? 0).toLocaleString('pl-PL')}</b></span><span>Wynik {String(run.report.account_currency || '')} <b>{run.report.realized_pnl_account_currency_estimate == null ? 'N/D · brak danych ticka' : Number(run.report.realized_pnl_account_currency_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span><span>Max obsunięcie {String(run.report.account_currency || '')} <b>{run.report.max_drawdown_account_currency_estimate == null ? 'N/D' : Number(run.report.max_drawdown_account_currency_estimate).toLocaleString('pl-PL', { maximumFractionDigits: 2 })}</b></span></div>}
           </div>}
           {events.length > 0 && <div className="fx-replay-events"><div className="fx-replay-section-title"><span>04</span> DZIENNIK ZDARZEŃ <small>PIERWSZE {events.length}</small></div><div className="fx-replay-event-list">{events.map(event => <div key={event.sequence} className={'fx-replay-event fx-replay-event--' + event.kind}><time>{showTime(event.time_msc)}</time><b>{event.kind.toUpperCase()}</b><span>{String(event.side || event.reason || '')}</span><span>{Number(event.price || 0).toLocaleString('pl-PL')}</span>{event.points !== undefined && <strong>{Number(event.points).toFixed(1)} pkt</strong>}</div>)}</div></div>}
         </section>

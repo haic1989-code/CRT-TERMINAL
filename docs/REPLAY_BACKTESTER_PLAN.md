@@ -38,13 +38,15 @@ Obecny start CRT wymaga gotowego mostu MT5 i świeżej historii wykresu. Przed u
 
 ## Skrypt strategii
 
-Strategia jest plikiem Python opartym na jawnym API CRT, a nie dowolnym plikiem MQL5. Minimalny interfejs V1:
+Strategia jest plikiem Python opartym na jawnym API CRT, a nie dowolnym plikiem MQL5. Kontrakt API v2 wymaga:
 
 - `on_start(context)` — konfiguracja i inicjalizacja stanu;
 - `on_tick(context, tick)` — wywołanie dla każdego ticka z archiwum;
 - `on_stop(context)` — podsumowanie stanu po ostatnim ticku.
 
-`context` udostępnia symbol i jego specyfikację, bieżące Bid/Ask, czas symulacji, świece zbudowane z ticków dla wybranego interwału, stan pozycji oraz metody składania **wyłącznie symulowanych** zleceń. V1 obsługuje pozycje rynkowe BUY/SELL, zlecenia BUY LIMIT/SELL LIMIT, SL/TP, zamknięcie i częściowe zamknięcie. Nie implementuje pełnego API MQL5. Kontrakt strategii i wersja API są zapisane w raporcie, aby późniejsza zmiana API nie zmieniała po cichu starych wyników.
+`context` udostępnia symbol i jego specyfikację, bieżące Bid/Ask, czas symulacji oraz zamknięte świece OHLC składane z rzeczywistych ticków w koszykach UTC. Niepełna świeca jest osobno dostępna jako `current_bar`; silnik nie tworzy pustych świec dla luk w danych. Świece D1 są więc UTC-aligned i mogą nie pokrywać się z granicą dnia serwerowego brokera. Historia wskaźników jest ograniczona do ostatnich 10 000 świec; obliczenia EMA, ATR i SMA są aktualizowane przy zamknięciu świecy. Dostępne operacje to `sma/ema(period, source)`, `atr(period)`, `round_price(price, direction)`, `risk_volume(stop_distance, risk_fraction=None)`, symulowane BUY/SELL i BUY LIMIT/SELL LIMIT, `modify_position`, `cancel_pending` oraz pełne i częściowe `close`. API v2 nie implementuje pełnego API MQL5. Kontrakt i wersja API trafiają do raportu.
+
+Wolumen ryzyka wymaga waluty konta i wiarygodnego tick value loss w manifeście. Jeśli nie ma ich w archiwum albo wyliczony wolumen byłby mniejszy od minimum brokera, silnik odmawia wyliczenia zamiast zwiększać ryzyko. Stare strategie można wczytać z lokalnego archiwum do edytora i zapisać jako nową wersję v2; oryginał nie jest nadpisywany.
 
 Silnik przyjmuje sygnały deterministycznie w kolejności ticków. Zmiana kodu, parametrów lub założeń kosztów tworzy nowe uruchomienie; nie zmienia zakończonego przebiegu.
 
@@ -52,7 +54,8 @@ Silnik przyjmuje sygnały deterministycznie w kolejności ticków. Zmiana kodu, 
 
 - BUY otwiera się po Ask i zamyka po Bid; SELL otwiera się po Bid i zamyka po Ask.
 - Wynik pozycji wyliczamy z cen faktycznie użytych w symulacji. Pokazujemy pipsy, gdy konwencję instrumentu da się ustalić z metadanych lub konfiguracji; w przeciwnym razie pokazujemy zmianę ceny i liczbę punktów/ticków brokera bez nazywania ich pipsem.
-- Prowizję, swap i poślizg pokazujemy jako osobne, jawne założenia. Brak danych o koszcie oznacza „nieuwzględniono”, a nie zero potwierdzone przez brokera.
+- Prowizję i poślizg można jawnie ustawić w parametrach; swap nie jest modelowany. Ustawienie prowizji `0` oznacza założenie symulacji, a nie potwierdzony brak opłat brokera.
+- Wynik pieniężny i ryzyko są oznaczone jako szacunki z metadanych tick value oraz waluty konta pobranych przy imporcie. Raport zwraca `null` zamiast pozornej wartości, gdy brakuje wymaganych metadanych; historyczne zmiany tick value i przeliczeń walut nie są odtworzone.
 - Rejestrujemy każde wejście, częściowe zamknięcie, zamknięcie, zmianę salda i powód zamknięcia. Wykres oznacza Entry i wyjścia; wynik zamkniętej pozycji pokazuje `+` albo `−`.
 - Odtwarzanie wstecz przesuwa kursor po wcześniej wyliczonym przebiegu zdarzeń. Nie wywołuje kodu strategii wstecz. Zmiana strategii lub danych uruchamia obliczenie od początku.
 
@@ -86,6 +89,10 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 - [x] Udostępnić wyłącznie symulowane operacje: BUY/SELL, BUY LIMIT/SELL LIMIT, SL/TP, zamknięcie i częściowe zamknięcie.
 - [x] Rozliczać BUY po Ask i wyjście po Bid; SELL po Bid i wyjście po Ask.
 - [x] Zapisać kod/wersję API, parametry, hash archiwum, jawne założenia kosztów i stronicowane zdarzenia.
+- [x] Udostępnić zamknięte świece Bid OHLC oraz wskaźniki SMA/EMA/ATR bez wglądu w bieżącą świecę.
+- [x] Dodać brokerowy krok ceny, wolumen z limitu ryzyka, modyfikację SL/TP oraz anulowanie zleceń oczekujących.
+- [x] Na końcu archiwum rozliczyć otwarte pozycje po ostatnim Bid/Ask i anulować niewypełnione zlecenia.
+- [x] Wczytać skrypty API v1 do edytora jako kopię do zapisania w v2.
 - [ ] Kryterium ukończenia: to samo archiwum, skrypt i parametry dają ten sam dziennik transakcji przy ponownym uruchomieniu.
 
 ### Etap 4 — przycisk i widok FX Replay

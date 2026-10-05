@@ -873,6 +873,7 @@ def replay_import_start(request: Request, body: dict[str, Any]):
             from_ms=from_ms,
             to_ms=to_ms,
             symbol_info=symbol_info,
+            account_currency=str(getattr(account, "currency", "") or ""),
         )
         job = {
             "id": job_id,
@@ -1060,7 +1061,17 @@ def _run_replay_strategy(run_id: str) -> None:
 @app.get("/v1/replay/strategies")
 def replay_strategies(request: Request):
     _authorize_runtime(request)
-    return {"api_version": 1, "values": replay_store.list_strategies()}
+    return {"api_version": 2, "values": replay_store.list_strategies()}
+
+
+@app.get("/v1/replay/strategies/{strategy_id}/source")
+def replay_strategy_source(request: Request, strategy_id: str):
+    _authorize_runtime(request)
+    strategy = replay_store.get_strategy(strategy_id)
+    source = replay_store.get_strategy_source(strategy_id)
+    if strategy is None or source is None:
+        raise HTTPException(status_code=404, detail={"error": "REPLAY_STRATEGY_NOT_FOUND"})
+    return {"id": strategy_id, "name": strategy["name"], "api_version": strategy["api_version"], "source": source}
 
 
 @app.post("/v1/replay/strategies", status_code=201)
@@ -1103,6 +1114,9 @@ def replay_run_start(request: Request, body: dict[str, Any]):
         raise HTTPException(status_code=409, detail={"error": "REPLAY_ARCHIVE_INCOMPLETE"})
     if replay_store.get_strategy(strategy_id) is None:
         raise HTTPException(status_code=404, detail={"error": "REPLAY_STRATEGY_NOT_FOUND"})
+    strategy = replay_store.get_strategy(strategy_id)
+    if strategy and strategy["api_version"] != 2:
+        raise HTTPException(status_code=409, detail={"error": "REPLAY_STRATEGY_API_VERSION_UNSUPPORTED", "required_api_version": 2})
     with _replay_runs_lock:
         if _active_replay_run:
             raise HTTPException(status_code=409, detail={"error": "REPLAY_RUN_ALREADY_ACTIVE", "run_id": _active_replay_run})

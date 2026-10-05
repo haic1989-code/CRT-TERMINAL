@@ -67,11 +67,20 @@ Desktop przekazuje mostowi prywatną ścieżkę katalogu danych. Ręczny bridge 
 
 ## FX Replay — skrypty Python i symulacja
 
-Kontrakt strategii ma `api_version=1` i wymaga funkcji `on_start(context)`,
+Kontrakt strategii ma `api_version=2` i wymaga funkcji `on_start(context)`,
 `on_tick(context, tick)` oraz `on_stop(context)`. Parametry są przekazywane jako
-`context.params`; bieżące dane rynku znajdują się w `context.tick`, a specyfikacja
-instrumentu w `context.spec`. Kontekst oferuje `buy`, `sell`, `buy_limit`,
-`sell_limit` oraz `close(position_id, volume=None)`. To wyłącznie symulator.
+`context.params`; bieżące dane rynku znajdują się w `context.tick`, specyfikacja
+instrumentu w `context.spec`, a stan symulatora w `context.positions` i
+`context.pending`. `context.bars` zawiera wyłącznie zamknięte świece Bid OHLC;
+bieżąca, niezamknięta świeca jest osobno dostępna w `context.current_bar`.
+Świece powstają w koszykach UTC, a przerwy w tickach nie są uzupełniane pustymi
+świecami; D1 może mieć inną granicę niż dzień serwerowy brokera. Historia
+wskaźników obejmuje do 10 000 zamkniętych świec. Kontekst oferuje
+`sma(period, source="close")`, `ema(period, source="close")`, `atr(period)`,
+`round_price(price, direction="nearest")`,
+`risk_volume(stop_distance, risk_fraction=None)`, symulowane `buy`, `sell`,
+`buy_limit`, `sell_limit`, `modify_position`, `cancel_pending` oraz
+`close(position_id, volume=None)`. To wyłącznie symulator.
 
 Minimalny przykład skryptu:
 
@@ -107,8 +116,17 @@ def on_stop(context):
   archiwum; zegar systemowy, pliki i inne zewnętrzne źródła nie są zamrażane.
 - BUY wchodzi po Ask i wychodzi po Bid; SELL odwrotnie. Limit wypełnia się przy
   pierwszym kwalifikującym się ticku, z poprawą ceny. SL/TP są sprawdzane po
-  stronie ceny zamknięcia. Prowizja, swap i poślizg pozostają niemodelowane;
-  wynik pieniężny nie jest szacowany.
+  stronie ceny zamknięcia. Prowizja i poślizg mają jawne parametry symulacji;
+  swap nie jest modelowany. Na końcu archiwum otwarte pozycje są wyceniane po
+  ostatnim wykonywalnym Bid/Ask, a oczekujące zlecenia anulowane.
+- Wynik pieniężny jest szacunkiem z tick value i waluty konta zapisanych przy
+  imporcie. Raport pokazuje `null` przy braku niezbędnych metadanych; nie
+  odtwarza historycznych zmian tick value ani kursów przewalutowania.
+- `risk_volume` uwzględnia odległość SL, tick value loss, skonfigurowaną
+  prowizję i poślizg przy wyjściu. Odmawia transakcji, gdy dane są niepełne,
+  kapitał wynosi zero lub mniej albo wolumen wypadłby poniżej minimum.
+- Skrypt API v1 można odczytać przez `GET /v1/replay/strategies/{id}/source`
+  i zapisać z edytora jako nową wersję API v2; stary rekord pozostaje bez zmian.
 
 ## Uruchomienie — Windows
 
