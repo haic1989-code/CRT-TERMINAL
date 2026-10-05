@@ -1,4 +1,6 @@
-# CRT Terminal 0.1.30
+# CRT Terminal 0.1.32
+
+- FX Replay automatycznie przechodzi między stronami ticków podczas odtwarzania w przód i w tył; ręczne sterowanie porcjami pozostaje dostępne.
 
 - FX Replay importuje ticki z MT5 przez `copy_ticks_range` w godzinnych porcjach.
 - Archiwum SQLite zachowuje brokerowy czas w milisekundach, kolejność, Bid/Ask/Last, wolumen i flagi oraz manifest z symbolem i specyfikacją.

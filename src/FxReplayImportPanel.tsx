@@ -138,6 +138,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const [playSpeed, setPlaySpeed] = useState(1)
   const [playDirection, setPlayDirection] = useState<1 | -1>(1)
   const [playing, setPlaying] = useState(false)
+  const [pageTransition, setPageTransition] = useState<{ archiveId: string; offset: number; direction: 1 | -1 } | null>(null)
   const [loadingTicks, setLoadingTicks] = useState(false)
   const [job, setJob] = useState<ReplayImportJob | null>(null)
   const [busy, setBusy] = useState(false)
@@ -280,6 +281,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const loadTickPage = async (archiveId: string, offset: number) => {
     setLoadingTicks(true)
     setPlaying(false)
+    setPageTransition(null)
     setError('')
     try {
       const page = await fetchReplayTicks(archiveId, offset, 10_000)
@@ -303,11 +305,51 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   useEffect(() => {
     if (!playing) return
     const timer = window.setInterval(() => setCursorIndex(index => {
-      if ((playDirection > 0 && index >= ticks.length - 1) || (playDirection < 0 && index <= 0)) { setPlaying(false); return index }
+      if ((playDirection > 0 && index >= ticks.length - 1) || (playDirection < 0 && index <= 0)) {
+        const hasAdjacentPage = playDirection > 0
+          ? tickPageOffset + ticks.length < (selectedArchive?.tick_count ?? 0)
+          : tickPageOffset > 0
+        setPlaying(false)
+        if (hasAdjacentPage && selectedArchiveId) {
+          setPageTransition({
+            archiveId: selectedArchiveId,
+            offset: playDirection > 0 ? tickPageOffset + ticks.length : Math.max(0, tickPageOffset - 10_000),
+            direction: playDirection,
+          })
+        }
+        return index
+      }
       return Math.max(0, Math.min(ticks.length - 1, index + playDirection * Math.max(1, Math.floor(playSpeed))))
     }), Math.max(25, 120 / Math.min(playSpeed, 4)))
     return () => window.clearInterval(timer)
-  }, [playing, ticks.length, playSpeed, playDirection])
+  }, [playing, ticks.length, tickPageOffset, selectedArchive?.tick_count, playSpeed, playDirection])
+
+  useEffect(() => {
+    if (!pageTransition) return
+    let stopped = false
+    const { archiveId, offset, direction } = pageTransition
+    const continuePlayback = async () => {
+      setLoadingTicks(true)
+      setError('')
+      try {
+        const page = await fetchReplayTicks(archiveId, offset, 10_000)
+        if (stopped) return
+        setTicks(page.values)
+        setTickPageOffset(page.offset)
+        setCursorIndex(direction > 0 ? 0 : Math.max(0, page.values.length - 1))
+        if (page.values.length > 0) setPlaying(true)
+      } catch (reason) {
+        if (!stopped) setError(reason instanceof Error ? reason.message : 'Nie udało się przejść do kolejnej porcji ticków.')
+      } finally {
+        if (!stopped) {
+          setLoadingTicks(false)
+          setPageTransition(null)
+        }
+      }
+    }
+    void continuePlayback()
+    return () => { stopped = true }
+  }, [pageTransition])
 
   return <div className="fx-replay-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="fx-replay-window" role="dialog" aria-modal="true" aria-labelledby="fx-replay-title">
@@ -343,7 +385,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <p>{archive.broker || 'Broker MT5'} · {archive.server || 'serwer niepodany'}</p>
             <p>{showTime(archive.from_ms)} → {showTime(archive.to_ms)}</p>
             <div className="fx-replay-archive-footer"><span>{archive.tick_count.toLocaleString('pl-PL')} ticków</span><span>{archive.sha256 ? 'SHA-256 ' + archive.sha256.slice(0, 12) + '…' : archive.error || 'bez sumy — import niekompletny'}</span></div>
-            {archive.status === 'complete' && <div className="fx-replay-archive-actions"><button type="button" className="fx-replay-select" onClick={() => { setSelectedArchiveId(archive.id); setTicks([]); setRun(null); setEvents([]) }}>{selectedArchiveId === archive.id ? 'WYBRANE DO SYMULACJI' : 'WYBIERZ ARCHIWUM'}</button><button type="button" className="fx-replay-select" disabled={loadingTicks} onClick={() => { setSelectedArchiveId(archive.id); void loadTickPage(archive.id, 0) }}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ ODTWARZACZ'}</button></div>}
+            {archive.status === 'complete' && <div className="fx-replay-archive-actions"><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { setSelectedArchiveId(archive.id); setTicks([]); setRun(null); setEvents([]) }}>{selectedArchiveId === archive.id ? 'WYBRANE DO SYMULACJI' : 'WYBIERZ ARCHIWUM'}</button><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { setSelectedArchiveId(archive.id); void loadTickPage(archive.id, 0) }}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ ODTWARZACZ'}</button></div>}
           </article>)}
         </section>
         <section className="fx-replay-strategies" aria-labelledby="fx-replay-strategy-title">
@@ -372,19 +414,19 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
           <div className="fx-replay-section-title"><span>05</span> ODTWARZACZ TICKÓW <small>{selectedArchive?.symbol || 'ARCHIWUM'} · {cursorIndex + 1} / {ticks.length}</small></div>
           <div className="fx-replay-player-readout"><strong>Bid {ticks[cursorIndex]?.bid.toLocaleString('pl-PL')}</strong><strong>Ask {ticks[cursorIndex]?.ask.toLocaleString('pl-PL')}</strong><span>{showTime(ticks[cursorIndex]?.time_msc || 0)}. {String(ticks[cursorIndex]?.time_msc || 0).slice(-3)}</span><label>ŚWIECA<select value={chartInterval} onChange={event => setChartInterval(event.target.value)}>{Object.keys(replayIntervals).map(value => <option key={value}>{value}</option>)}</select></label></div>
           <ReplayPriceChart ticks={ticks} cursor={cursorIndex} events={events} intervalMs={replayIntervals[chartInterval]} />
-          <input className="fx-replay-timeline" aria-label="Pozycja odtwarzania w aktualnej porcji ticków" type="range" min="0" max={Math.max(0, ticks.length - 1)} value={Math.min(cursorIndex, ticks.length - 1)} onChange={event => { setPlaying(false); setCursorIndex(Number(event.target.value)) }} />
+          <input className="fx-replay-timeline" aria-label="Pozycja odtwarzania w aktualnej porcji ticków" type="range" min="0" max={Math.max(0, ticks.length - 1)} value={Math.min(cursorIndex, ticks.length - 1)} disabled={loadingTicks || !!pageTransition} onChange={event => { setPlaying(false); setCursorIndex(Number(event.target.value)) }} />
           <div className="fx-replay-player-controls">
             <button type="button" disabled={loadingTicks || tickPageOffset <= 0} onClick={() => void loadTickPage(selectedArchiveId, Math.max(0, tickPageOffset - 10_000))}>POPRZEDNIA PORCJA</button>
-            <button type="button" disabled={cursorIndex <= 0} onClick={() => { setPlaying(false); setCursorIndex(index => Math.max(0, index - 1)) }}>‹ TICK</button>
-            <button type="button" disabled={cursorIndex <= 0} onClick={() => stepCandle(-1)}>‹ ŚWIECA</button>
-            <button type="button" className="play" disabled={ticks.length < 2} onClick={() => { if (playing && playDirection === 1) setPlaying(false); else { setPlayDirection(1); setPlaying(true) } }}>{playing && playDirection === 1 ? 'PAUZA' : 'ODTWÓRZ ▶'}</button>
-            <button type="button" className="rewind" disabled={ticks.length < 2} onClick={() => { if (playing && playDirection === -1) setPlaying(false); else { setPlayDirection(-1); setPlaying(true) } }}>{playing && playDirection === -1 ? 'PAUZA' : '◀ COFAJ'}</button>
-            <button type="button" disabled={cursorIndex >= ticks.length - 1} onClick={() => stepCandle(1)}>ŚWIECA ›</button>
-            <button type="button" disabled={cursorIndex >= ticks.length - 1} onClick={() => { setPlaying(false); setCursorIndex(index => Math.min(ticks.length - 1, index + 1)) }}>TICK ›</button>
+            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex <= 0} onClick={() => { setPlaying(false); setCursorIndex(index => Math.max(0, index - 1)) }}>‹ TICK</button>
+            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex <= 0} onClick={() => stepCandle(-1)}>‹ ŚWIECA</button>
+            <button type="button" className="play" disabled={loadingTicks || !!pageTransition || ticks.length < 2} onClick={() => { if (playing && playDirection === 1) setPlaying(false); else { setPlayDirection(1); setPlaying(true) } }}>{playing && playDirection === 1 ? 'PAUZA' : 'ODTWÓRZ ▶'}</button>
+            <button type="button" className="rewind" disabled={loadingTicks || !!pageTransition || ticks.length < 2} onClick={() => { if (playing && playDirection === -1) setPlaying(false); else { setPlayDirection(-1); setPlaying(true) } }}>{playing && playDirection === -1 ? 'PAUZA' : '◀ COFAJ'}</button>
+            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex >= ticks.length - 1} onClick={() => stepCandle(1)}>ŚWIECA ›</button>
+            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex >= ticks.length - 1} onClick={() => { setPlaying(false); setCursorIndex(index => Math.min(ticks.length - 1, index + 1)) }}>TICK ›</button>
             <button type="button" disabled={loadingTicks || tickPageOffset + ticks.length >= (selectedArchive?.tick_count || 0)} onClick={() => void loadTickPage(selectedArchiveId, tickPageOffset + ticks.length)}>NASTĘPNA PORCJA</button>
             <label>TEMPO<select value={playSpeed} onChange={event => setPlaySpeed(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={5}>5×</option><option value={20}>20×</option></select></label>
           </div>
-          <p className="fx-replay-note">Luna › Odtwarzanie obejmuje 10 000 ticków na porcję. Zmieniaj porcję przyciskami, aby przewijać całą historię w przód i w tył.</p>
+          <p className="fx-replay-note">Luna › Odtwarzanie płynnie przechodzi między porcjami po 10 000 ticków. Możesz też wybrać porcję ręcznie.</p>
         </section>}
       </div>
     </section>
