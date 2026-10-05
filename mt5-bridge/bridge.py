@@ -1143,9 +1143,11 @@ def replay_run_cancel(request: Request, run_id: str):
 
 
 @app.get("/v1/replay/runs/{run_id}/events")
-def replay_run_events(request: Request, run_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=500, ge=1, le=5000)):
+def replay_run_events(request: Request, run_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=500, ge=1, le=5000), tick_from: int | None = Query(default=None, ge=0), tick_to: int | None = Query(default=None, ge=0)):
     _authorize_runtime(request)
-    page = replay_store.get_run_events(run_id, offset, limit)
+    if tick_from is not None and tick_to is not None and tick_to < tick_from:
+        raise HTTPException(status_code=400, detail={"error": "REPLAY_EVENT_RANGE_INVALID"})
+    page = replay_store.get_run_events(run_id, offset, limit, tick_from, tick_to)
     if page is None:
         raise HTTPException(status_code=404, detail={"error": "REPLAY_RUN_NOT_FOUND"})
     return page

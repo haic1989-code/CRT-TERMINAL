@@ -211,7 +211,8 @@ function validateResponse(path: string, payload: unknown): void {
     if (endpoint.endsWith('/ticks')) {
       if (!numbers(payload, ['offset', 'limit', 'total']) || !Array.isArray(payload.values)) return fail()
       const validTick = (value: unknown) => object(value)
-        && numbers(value, ['time_msc', 'bid', 'ask', 'last', 'volume', 'volume_real', 'flags'])
+        && numbers(value, ['sequence', 'time_msc', 'bid', 'ask', 'last', 'volume', 'volume_real', 'flags'])
+        && Number.isInteger(Number(value.sequence))
         && Number(value.time_msc) > 0
         && Math.min(Number(value.bid), Number(value.ask), Number(value.last), Number(value.volume), Number(value.volume_real)) >= 0
         && !(Number(value.bid) > 0 && Number(value.ask) > 0 && Number(value.ask) < Number(value.bid))
@@ -372,8 +373,10 @@ export function cancelReplayRun(runId: string, signal?: AbortSignal) {
   return localRequest<ReplayRun>(`/v1/replay/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST', cache: 'no-store', signal })
 }
 
-export function fetchReplayRunEvents(runId: string, offset = 0, limit = 500, signal?: AbortSignal) {
+export function fetchReplayRunEvents(runId: string, offset = 0, limit = 500, signal?: AbortSignal, tickFrom?: number, tickTo?: number) {
   const query = new URLSearchParams({ offset: String(offset), limit: String(limit) })
+  if (tickFrom !== undefined) query.set('tick_from', String(tickFrom))
+  if (tickTo !== undefined) query.set('tick_to', String(tickTo))
   return localFetch<{ offset: number; limit: number; total: number; values: ReplayRunEvent[] }>(
     `/v1/replay/runs/${encodeURIComponent(runId)}/events?${query.toString()}`,
     signal,

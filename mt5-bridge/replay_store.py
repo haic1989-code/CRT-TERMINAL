@@ -83,12 +83,23 @@ def initialize(data_dir: str | Path) -> Path:
                 CREATE TABLE IF NOT EXISTS replay_run_events (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT NOT NULL REFERENCES replay_runs(id) ON DELETE CASCADE,
+                    tick_sequence INTEGER,
+                    kind TEXT NOT NULL DEFAULT '',
+                    time_msc INTEGER NOT NULL DEFAULT 0,
                     payload_json TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_replay_events_run_sequence
                     ON replay_run_events(run_id, sequence);
             """)
             db.execute("PRAGMA journal_mode=WAL")
+            event_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(replay_run_events)")}
+            if "tick_sequence" not in event_columns:
+                db.execute("ALTER TABLE replay_run_events ADD COLUMN tick_sequence INTEGER")
+            if "kind" not in event_columns:
+                db.execute("ALTER TABLE replay_run_events ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
+            if "time_msc" not in event_columns:
+                db.execute("ALTER TABLE replay_run_events ADD COLUMN time_msc INTEGER NOT NULL DEFAULT 0")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_replay_events_tick_range ON replay_run_events(run_id, tick_sequence)")
             if not _initialized:
                 db.execute(
                     "UPDATE archives SET status='interrupted', error='Aplikacja została zamknięta przed końcem importu.', updated_at=? WHERE status='importing'",
@@ -373,22 +384,33 @@ def get_run(run_id: str) -> dict[str, Any] | None:
 
 
 def append_run_events(run_id: str, events: Iterable[dict[str, Any]]) -> int:
-    payloads = [(run_id, json.dumps(event, ensure_ascii=False, allow_nan=False, separators=(",", ":"))) for event in events]
+    payloads = [
+        (run_id, event.get("tick_sequence"), str(event.get("kind", "")), int(event.get("time_msc", 0)), json.dumps(event, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
+        for event in events
+    ]
     if not payloads:
         return 0
     with _db_lock, _connection() as db:
-        db.executemany("INSERT INTO replay_run_events(run_id,payload_json) VALUES(?,?)", payloads)
+        db.executemany("INSERT INTO replay_run_events(run_id,tick_sequence,kind,time_msc,payload_json) VALUES(?,?,?,?,?)", payloads)
     return len(payloads)
 
 
-def get_run_events(run_id: str, offset: int, limit: int) -> dict[str, Any] | None:
+def get_run_events(run_id: str, offset: int, limit: int, tick_from: int | None = None, tick_to: int | None = None) -> dict[str, Any] | None:
     with _db_lock, _connection() as db:
         run = db.execute("SELECT id FROM replay_runs WHERE id=?", (run_id,)).fetchone()
         if run is None:
             return None
-        total = int(db.execute("SELECT COUNT(*) FROM replay_run_events WHERE run_id=?", (run_id,)).fetchone()[0])
+        where = "run_id=?"
+        args: list[Any] = [run_id]
+        if tick_from is not None:
+            where += " AND tick_sequence>=?"
+            args.append(tick_from)
+        if tick_to is not None:
+            where += " AND tick_sequence<=?"
+            args.append(tick_to)
+        total = int(db.execute(f"SELECT COUNT(*) FROM replay_run_events WHERE {where}", args).fetchone()[0])
         rows = db.execute(
-            "SELECT sequence,payload_json FROM replay_run_events WHERE run_id=? ORDER BY sequence LIMIT ? OFFSET ?",
-            (run_id, limit, offset),
+            f"SELECT sequence,payload_json FROM replay_run_events WHERE {where} ORDER BY sequence LIMIT ? OFFSET ?",
+            (*args, limit, offset),
         ).fetchall()
     return {"offset": offset, "limit": limit, "total": total, "values": [{"sequence": int(row["sequence"]), **json.loads(row["payload_json"])} for row in rows]}

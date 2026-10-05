@@ -94,8 +94,8 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 - [ ] Otwierać dedykowany widok z wyborem archiwum, skryptu Python i parametrów symulacji.
 - [x] Otwierać ekran CRT z listą archiwów i kompletnych skryptów Python, edytorem nowej strategii, parametrami i uruchomieniem symulacji.
 - [x] Zaprojektować tło w stylu CRT: ciemny granat, niebieska poświata monitora, delikatna siatka i subtelne linie ekranu.
-- [ ] Dodać wykres archiwum, oś czasu, Start/Pauza, krok tick/bar, prędkość oraz przewijanie w przód i w tył.
-- [x] Pokazywać podsumowanie wyniku w punktach oraz stronicowany dziennik zdarzeń symulacji.
+- [x] Dodać wykres archiwum z ticków, oś czasu, Start/Pauza, krok tick/bar, prędkość oraz przewijanie w przód i w tył w porcjach.
+- [x] Rysować Entry/Exit na wykresie oraz pokazywać wynik w punktach, dziennik i podsumowanie transakcji.
 - [ ] Nie wyświetlać w tym widoku panelu egzekucji DEMO/live; wszystkie operacje są symulowane.
 - [ ] Kryterium ukończenia: można otworzyć lokalne archiwum, uruchomić strategię i płynnie obejrzeć zapisany przebieg w obu kierunkach.
 

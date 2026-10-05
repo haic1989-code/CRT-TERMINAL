@@ -97,6 +97,8 @@ def on_stop(context):
 - `POST /v1/replay/runs` przyjmuje `archive_id`, `strategy_id` i opcjonalne `params`.
   `GET /v1/replay/runs/{id}` pokazuje stan/progres/raport; `POST .../{id}/cancel`
   anuluje obliczenie; `GET .../{id}/events?offset=0&limit=500` stronicuje dziennik.
+- Zdarzenia można ograniczyć do strony ticków parametrami `tick_from` i `tick_to`,
+  co pozwala wykresowi pobierać znaczniki bez ładowania całego dziennika.
 - Proces wykonawczy uruchamia się z `-I -S`, więc nie widzi pakietu MetaTrader5
   z lokalnego środowiska bridge. Strategie są kodem lokalnym użytkownika i nie są
   sandboxem systemowym; uruchamiaj tylko zaufane pliki.
