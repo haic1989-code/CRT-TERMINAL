@@ -297,10 +297,10 @@ export type ReplayImportJob = {
   archive: ReplayArchive | null
 }
 
-export type ReplayTick = Pick<Mt5Tick, 'time_msc' | 'bid' | 'ask' | 'last' | 'volume' | 'volume_real' | 'flags'>
+export type ReplayTick = Pick<Mt5Tick, 'time_msc' | 'bid' | 'ask' | 'last' | 'volume' | 'volume_real' | 'flags'> & { sequence: number }
 
 export type ReplayStrategy = { id: string; name: string; sha256: string; api_version: number; created_at: string; updated_at: string }
-export type ReplayRunEvent = { sequence: number; kind: string; time_msc: number; [key: string]: unknown }
+export type ReplayRunEvent = { sequence: number; tick_sequence: number | null; kind: string; time_msc: number; [key: string]: unknown }
 export type ReplayRun = {
   id: string; archive_id: string; strategy_id: string;
   status: 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';

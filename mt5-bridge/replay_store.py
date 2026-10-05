@@ -296,7 +296,7 @@ def get_archive_ticks(archive_id: str, offset: int, limit: int) -> dict[str, Any
         if archive["status"] != "complete":
             raise ValueError("Niekompletnego archiwum nie można użyć do replay.")
         rows = db.execute(
-            "SELECT time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence LIMIT ? OFFSET ?",
+            "SELECT sequence,time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence LIMIT ? OFFSET ?",
             (archive_id, limit, offset),
         ).fetchall()
     return {"offset": offset, "limit": limit, "total": int(archive["tick_count"]), "values": [dict(row) for row in rows]}

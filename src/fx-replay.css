@@ -14,3 +14,26 @@
 @media(max-width:680px){.fx-replay-content{grid-template-columns:1fr;padding:17px}.fx-replay-archives{border-left:0;border-top:1px solid rgba(77,174,211,.2);padding:19px 0 0}.fx-replay-header{padding:18px 18px 14px}.fx-replay-range{grid-template-columns:1fr}.fx-replay-window{max-height:94vh}}
 .fx-replay-launch{margin-left:auto;min-height:27px;padding:0 10px;border:1px solid rgba(71,218,185,.62);border-radius:4px;background:linear-gradient(90deg,rgba(4,40,39,.9),rgba(5,30,45,.94));color:#76e6c2;font:800 9px Consolas,'Courier New',monospace;letter-spacing:.08em;white-space:nowrap;cursor:pointer;box-shadow:inset 0 0 12px rgba(57,210,185,.08),0 0 12px rgba(38,178,169,.08)}
 .fx-replay-launch:hover{border-color:#7ef2d0;color:#dcfff3;box-shadow:0 0 15px rgba(38,216,183,.22)}
+.fx-replay-window{width:min(1180px,100%);max-height:94vh}
+.fx-replay-content--workspace{grid-template-columns:minmax(0,.88fr) minmax(0,1.12fr);gap:20px}
+.fx-replay-strategies{grid-column:1/-1;min-width:0;border-top:1px solid rgba(77,174,211,.23);padding-top:18px;display:grid;grid-template-columns:minmax(0,1fr) minmax(190px,.55fr);gap:0 18px}
+.fx-replay-strategies>.fx-replay-section-title,.fx-replay-strategies>.fx-replay-note,.fx-replay-strategies>.fx-replay-actions,.fx-replay-strategies>.fx-replay-job,.fx-replay-strategies>.fx-replay-events{grid-column:1/-1}
+.fx-replay-strategies label{display:flex;flex-direction:column;gap:7px;margin:0 0 13px;color:#8baebb;font-size:9px;letter-spacing:.1em}
+.fx-replay-strategies input,.fx-replay-strategies select,.fx-replay-strategies textarea{width:100%;min-width:0;border:1px solid rgba(100,174,203,.37);border-radius:5px;background:rgba(2,13,23,.82);color:#d3f3ff;padding:9px 10px;font:11px/1.5 Consolas,'Courier New',monospace;letter-spacing:normal;outline:none}
+.fx-replay-strategies textarea{height:210px;resize:vertical;tab-size:4;white-space:pre;overflow:auto}
+.fx-replay-strategies textarea.fx-replay-params{height:74px}
+.fx-replay-strategies input:focus,.fx-replay-strategies select:focus,.fx-replay-strategies textarea:focus{border-color:#69d7f0;box-shadow:0 0 0 2px rgba(46,190,229,.13)}
+.fx-replay-strategy-actions{display:flex;flex-direction:column;gap:9px;min-width:0}
+.fx-replay-strategy-actions>button,.fx-replay-select{min-height:34px;padding:0 11px;border:1px solid rgba(82,204,227,.55);border-radius:4px;background:rgba(7,43,58,.78);color:#a9ecf6;font:800 9px Consolas,'Courier New',monospace;letter-spacing:.06em;cursor:pointer}
+.fx-replay-strategy-actions button:disabled{opacity:.4;cursor:not-allowed}
+.fx-replay-select-label{margin:0!important}
+.fx-replay-archive.is-selected{border-color:rgba(87,228,192,.8);box-shadow:inset 0 0 16px rgba(45,211,171,.08)}
+.fx-replay-archive .fx-replay-select{margin-top:11px;width:100%}
+.fx-replay-metrics{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px!important}
+.fx-replay-metrics span{display:flex;flex-direction:column;gap:3px;color:#8bb4c4;font-size:9px}
+.fx-replay-metrics b{color:#8ef0c4;font-size:12px}
+.fx-replay-events{margin-top:18px;padding-top:15px;border-top:1px solid rgba(77,174,211,.19);min-width:0}
+.fx-replay-event-list{max-height:230px;overflow:auto;border:1px solid rgba(93,148,177,.2);background:rgba(2,13,23,.44)}
+.fx-replay-event{display:grid;grid-template-columns:minmax(125px,1.1fr) 76px 100px 90px 72px;gap:8px;align-items:center;padding:7px 9px;border-bottom:1px solid rgba(93,148,177,.12);font-size:9px;color:#9cb9c7}
+.fx-replay-event time{font-size:8px}.fx-replay-event b{color:#70d5e9;letter-spacing:.06em}.fx-replay-event--exit strong{color:#8ef0c4}.fx-replay-event--entry b{color:#ffd374}.fx-replay-event--pending b{color:#b6a2f6}
+@media(max-width:800px){.fx-replay-content--workspace{grid-template-columns:1fr}.fx-replay-strategies{grid-template-columns:1fr}.fx-replay-strategies>.fx-replay-section-title,.fx-replay-strategies>.fx-replay-note,.fx-replay-strategies>.fx-replay-actions,.fx-replay-strategies>.fx-replay-job,.fx-replay-strategies>.fx-replay-events{grid-column:1}.fx-replay-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fx-replay-event{grid-template-columns:1fr 65px 70px}.fx-replay-event>span:nth-of-type(2),.fx-replay-event strong{display:none}}

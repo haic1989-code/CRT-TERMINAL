@@ -92,9 +92,10 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 
 - [x] Dodać przycisk `FX REPLAY` do głównego paska CRT; ma być dostępny również w trybie offline.
 - [ ] Otwierać dedykowany widok z wyborem archiwum, skryptu Python i parametrów symulacji.
-- [ ] Zaprojektować tło w stylu CRT: ciemny granat, niebieska poświata monitora, delikatna siatka i subtelne linie ekranu.
+- [x] Otwierać ekran CRT z listą archiwów i kompletnych skryptów Python, edytorem nowej strategii, parametrami i uruchomieniem symulacji.
+- [x] Zaprojektować tło w stylu CRT: ciemny granat, niebieska poświata monitora, delikatna siatka i subtelne linie ekranu.
 - [ ] Dodać wykres archiwum, oś czasu, Start/Pauza, krok tick/bar, prędkość oraz przewijanie w przód i w tył.
-- [ ] Rysować znaczniki Entry/Exit, wynik w pipsach/punktach oraz dziennik i podsumowanie transakcji.
+- [x] Pokazywać podsumowanie wyniku w punktach oraz stronicowany dziennik zdarzeń symulacji.
 - [ ] Nie wyświetlać w tym widoku panelu egzekucji DEMO/live; wszystkie operacje są symulowane.
 - [ ] Kryterium ukończenia: można otworzyć lokalne archiwum, uruchomić strategię i płynnie obejrzeć zapisany przebieg w obu kierunkach.
 

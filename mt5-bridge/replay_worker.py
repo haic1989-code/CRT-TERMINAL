@@ -54,6 +54,7 @@ class ReplayContext:
         self.symbol = symbol
         self.spec = spec
         self.params = params
+        self.state: dict[str, Any] = {}
         self.now_ms = 0
         self.bid = 0.0
         self.ask = 0.0
@@ -79,7 +80,7 @@ class ReplayContext:
 
     def _event(self, kind: str, **values: Any) -> None:
         self.event_count += 1
-        print(json.dumps({"event": {"kind": kind, "time_msc": self.now_ms, **values}}, ensure_ascii=False, allow_nan=False, separators=(",", ":")), file=sys.__stdout__, flush=True)
+        print(json.dumps({"event": {"kind": kind, "time_msc": self.now_ms, "tick_sequence": self.tick.get("sequence"), **values}}, ensure_ascii=False, allow_nan=False, separators=(",", ":")), file=sys.__stdout__, flush=True)
 
     def _open(self, side: str, volume: float, price: float, sl: float | None, tp: float | None, order_type: str = "market") -> str:
         sl = _price(sl, self.spec, "Stop Loss") if sl is not None else None
