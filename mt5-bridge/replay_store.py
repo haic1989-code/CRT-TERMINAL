@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import sqlite3
+import struct
 import threading
 import uuid
 from contextlib import contextmanager
@@ -15,6 +16,8 @@ from typing import Any, Iterable
 _db_path: Path | None = None
 _initialized = False
 _db_lock = threading.RLock()
+_TICK_HASH_RECORD = struct.Struct("<qdddqdq")
+_TICK_INSERT_BATCH_SIZE = 25_000
 
 
 def initialize(data_dir: str | Path) -> Path:
@@ -178,33 +181,7 @@ def create_archive(
 
 
 def append_ticks(archive_id: str, rows: Iterable[Any], expected_from_ms: int, expected_to_ms: int) -> tuple[int, int | None]:
-    """Validate and append one fetched range without altering broker tick values."""
-    normalized: list[tuple[int, int, float, float, float, int, float, int]] = []
-    previous_ms: int | None = None
-    for row in rows:
-        time_msc = int(row["time_msc"])
-        bid = float(row["bid"])
-        ask = float(row["ask"])
-        last = float(row["last"])
-        volume = int(row["volume"])
-        volume_real = float(row["volume_real"])
-        flags = int(row["flags"])
-        if time_msc < expected_from_ms or time_msc > expected_to_ms:
-            continue
-        if time_msc <= 0 or (previous_ms is not None and time_msc < previous_ms):
-            raise ValueError("MT5 zwrócił ticki w nieprawidłowej kolejności czasu.")
-        if not all(math.isfinite(value) for value in (bid, ask, last, volume_real)):
-            raise ValueError("MT5 zwrócił nieprawidłową cenę lub wolumen ticka.")
-        if min(bid, ask, last, volume_real) < 0 or volume < 0 or (bid > 0 and ask > 0 and ask < bid):
-            raise ValueError("MT5 zwrócił nieprawidłowe wartości ticka.")
-        normalized.append((0, time_msc, bid, ask, last, volume, volume_real, flags))
-        previous_ms = time_msc
-
-    if not normalized:
-        with _db_lock, _connection() as db:
-            latest = db.execute("SELECT MAX(time_msc) FROM ticks WHERE archive_id=?", (archive_id,)).fetchone()[0]
-        return 0, int(latest) if latest is not None else None
-
+    """Validate and append one fetched range in bounded batches and one transaction."""
     with _db_lock, _connection() as db:
         state = db.execute("SELECT tick_count FROM archives WHERE id=? AND status='importing'", (archive_id,)).fetchone()
         if state is None:
@@ -214,18 +191,43 @@ def append_ticks(archive_id: str, rows: Iterable[Any], expected_from_ms: int, ex
             "SELECT time_msc FROM ticks WHERE archive_id=? ORDER BY sequence DESC LIMIT 1",
             (archive_id,),
         ).fetchone()
-        if previous is not None and normalized[0][1] < int(previous[0]):
-            raise ValueError("Kolejny zakres MT5 cofnął czas względem wcześniej pobranych ticków.")
-        for index, row in enumerate(normalized):
-            normalized[index] = (sequence + index, *row[1:])
-        db.executemany(
-            "INSERT INTO ticks(archive_id,sequence,time_msc,bid,ask,last,volume,volume_real,flags) VALUES(?,?,?,?,?,?,?,?,?)",
-            [(archive_id, *row) for row in normalized],
-        )
-        total = sequence + len(normalized)
-        latest_ms = normalized[-1][1]
+        previous_ms = int(previous[0]) if previous is not None else None
+        latest_ms = previous_ms
+        added = 0
+        batch: list[tuple[str, int, int, float, float, float, int, float, int]] = []
+        insert_sql = "INSERT INTO ticks(archive_id,sequence,time_msc,bid,ask,last,volume,volume_real,flags) VALUES(?,?,?,?,?,?,?,?,?)"
+
+        for row in rows:
+            time_msc = int(row["time_msc"])
+            if time_msc < expected_from_ms or time_msc > expected_to_ms:
+                continue
+            bid = float(row["bid"])
+            ask = float(row["ask"])
+            last = float(row["last"])
+            volume = int(row["volume"])
+            volume_real = float(row["volume_real"])
+            flags = int(row["flags"])
+            if time_msc <= 0 or (previous_ms is not None and time_msc < previous_ms):
+                raise ValueError("MT5 zwrócił ticki w nieprawidłowej kolejności czasu.")
+            if not all(math.isfinite(value) for value in (bid, ask, last, volume_real)):
+                raise ValueError("MT5 zwrócił nieprawidłową cenę lub wolumen ticka.")
+            if min(bid, ask, last, volume_real) < 0 or volume < 0 or (bid > 0 and ask > 0 and ask < bid):
+                raise ValueError("MT5 zwrócił nieprawidłowe wartości ticka.")
+            batch.append((archive_id, sequence + added, time_msc, bid, ask, last, volume, volume_real, flags))
+            previous_ms = latest_ms = time_msc
+            added += 1
+            if len(batch) >= _TICK_INSERT_BATCH_SIZE:
+                db.executemany(insert_sql, batch)
+                batch.clear()
+
+        if batch:
+            db.executemany(insert_sql, batch)
+        if not added:
+            return 0, latest_ms
+
+        total = sequence + added
         db.execute("UPDATE archives SET tick_count=?,updated_at=? WHERE id=?", (total, _now(), archive_id))
-    return len(normalized), latest_ms
+    return added, latest_ms
 
 
 def finish_archive(archive_id: str) -> dict[str, Any]:
@@ -240,11 +242,19 @@ def finish_archive(archive_id: str) -> dict[str, Any]:
             "SELECT time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence",
             (archive_id,),
         )
+        hash_buffer = bytearray(_TICK_HASH_RECORD.size * 8192)
+        buffer_offset = 0
         for row in cursor:
-            digest.update(json.dumps(list(row), separators=(",", ":"), allow_nan=False).encode("ascii"))
-            digest.update(b"\n")
+            _TICK_HASH_RECORD.pack_into(hash_buffer, buffer_offset, *row)
+            buffer_offset += _TICK_HASH_RECORD.size
+            if buffer_offset == len(hash_buffer):
+                digest.update(hash_buffer)
+                buffer_offset = 0
+        if buffer_offset:
+            digest.update(memoryview(hash_buffer)[:buffer_offset])
         manifest = json.loads(archive["manifest_json"])
         manifest["completeness"] = "all_requested_ranges_returned"
+        manifest["tick_hash_encoding"] = "little-endian:<qdddqdq>"
         manifest["tick_count"] = int(archive["tick_count"])
         manifest["sha256"] = digest.hexdigest()
         manifest["completed_at"] = _now()

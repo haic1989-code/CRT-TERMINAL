@@ -789,8 +789,12 @@ def _run_replay_import(job_id: str) -> None:
     archive_id = job["archive_id"]
     cursor_ms = job["from_ms"]
     try:
-        # Short, disjoint one-hour requests bound memory while retaining the
-        # broker's original millisecond timestamps and tick order.
+        # Begin with a conservative hour, then adapt request size to the
+        # symbol's observed tick density. This cuts MT5 IPC round trips for
+        # quiet symbols while keeping each returned NumPy array bounded.
+        min_chunk_ms = 15 * 60 * 1000
+        max_chunk_ms = 4 * 60 * 60 * 1000
+        target_ticks_per_chunk = 150_000
         chunk_ms = 60 * 60 * 1000
         while cursor_ms <= job["to_ms"]:
             if job["cancel"].is_set() or _closing.is_set():
@@ -814,8 +818,15 @@ def _run_replay_import(job_id: str) -> None:
                 span = max(1, job["to_ms"] - job["from_ms"])
                 job["progress"] = min(99, int((chunk_to_ms - job["from_ms"]) * 100 / span))
                 job["last_tick_ms"] = latest_ms or job.get("last_tick_ms")
+            if added == 0:
+                chunk_ms = max_chunk_ms
+            else:
+                scale = max(0.5, min(3.0, target_ticks_per_chunk / added))
+                chunk_ms = max(min_chunk_ms, min(max_chunk_ms, int(chunk_ms * scale)))
             cursor_ms = chunk_to_ms + 1
 
+        with _replay_jobs_lock:
+            job.update(status="finalizing", progress=99)
         archive = replay_store.finish_archive(archive_id)
         with _replay_jobs_lock:
             job.update(status="complete", progress=100, archive=archive, error=None)
@@ -851,7 +862,7 @@ def replay_import_start(request: Request, body: dict[str, Any]):
     with _replay_jobs_lock:
         if _active_replay_job:
             active = _replay_jobs.get(_active_replay_job)
-            if active and active["status"] in {"starting", "importing"}:
+            if active and active["status"] in {"starting", "importing", "finalizing"}:
                 raise HTTPException(status_code=409, detail={"error": "REPLAY_IMPORT_ALREADY_RUNNING", "job_id": _active_replay_job})
         _active_replay_job = job_id
         _replay_jobs[job_id] = {"id": job_id, "status": "starting"}

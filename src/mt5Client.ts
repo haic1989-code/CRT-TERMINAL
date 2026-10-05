@@ -287,7 +287,7 @@ export type ReplayArchive = {
 export type ReplayImportJob = {
   id: string
   archive_id: string
-  status: 'starting' | 'importing' | 'complete' | 'failed' | 'cancelled'
+  status: 'starting' | 'importing' | 'finalizing' | 'complete' | 'failed' | 'cancelled'
   symbol: string
   from_ms: number
   to_ms: number

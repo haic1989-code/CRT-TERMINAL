@@ -178,7 +178,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const activeJob = job?.status === 'starting' || job?.status === 'importing'
+  const activeJob = job?.status === 'starting' || job?.status === 'importing' || job?.status === 'finalizing'
   const completeCount = useMemo(() => archives.filter(archive => archive.status === 'complete').length, [archives])
   const selectedArchive = archives.find(archive => archive.id === selectedArchiveId)
   const selectedStrategy = strategies.find(strategy => strategy.id === selectedStrategyId)
@@ -212,7 +212,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
         const latest = await fetchReplayImport(job.id)
         if (stopped) return
         setJob(latest)
-        if (latest.status !== 'starting' && latest.status !== 'importing') void refreshArchives()
+        if (!['starting', 'importing', 'finalizing'].includes(latest.status)) void refreshArchives()
       } catch (reason) {
         if (!stopped) setError(reason instanceof Error ? reason.message : 'Nie mogę odczytać postępu importu.')
       }
@@ -422,10 +422,10 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
           <p className="fx-replay-note">Luna › Import wymaga uruchomionego MT5. Ticki zapiszę w UTC; gotowe archiwum będzie dostępne offline.</p>
           <div className="fx-replay-actions">
             <button type="submit" disabled={busy || !!activeJob}>{busy ? 'ŁĄCZĘ Z MT5…' : 'IMPORTUJ TICKI'}</button>
-            {activeJob && <button type="button" className="secondary" onClick={() => void stopImport()}>ANULUJ IMPORT</button>}
+            {activeJob && <button type="button" className="secondary" disabled={job?.status !== 'importing'} onClick={() => void stopImport()}>{job?.status === 'finalizing' ? 'FINALIZUJĘ ARCHIWUM…' : 'ANULUJ IMPORT'}</button>}
           </div>
           {job && <div className={'fx-replay-job fx-replay-job--' + job.status} role="status" aria-live="polite">
-            <div><b>{job.status === 'complete' ? 'Luna › Archiwum gotowe.' : job.status === 'failed' ? 'Luna › Import zatrzymał się z błędem.' : job.status === 'cancelled' ? 'Luna › Import anulowany.' : 'Luna › Pobieram ticki z MT5…'}</b><span>{job.symbol} · {job.tick_count.toLocaleString('pl-PL')} ticków</span></div>
+            <div><b>{job.status === 'complete' ? 'Luna › Archiwum gotowe.' : job.status === 'failed' ? 'Luna › Import zatrzymał się z błędem.' : job.status === 'cancelled' ? 'Luna › Import anulowany.' : job.status === 'finalizing' ? 'Luna › Zapisuję sumę kontrolną archiwum…' : 'Luna › Pobieram ticki z MT5…'}</b><span>{job.symbol} · {job.tick_count.toLocaleString('pl-PL')} ticków</span></div>
             {activeJob && <><progress max="100" value={job.progress} /><span>{job.progress}% · do {showTime(job.completed_through_ms)}</span></>}
             {job.error && <small>{job.error}</small>}
           </div>}
