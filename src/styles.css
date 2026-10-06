@@ -1,6 +1,7 @@
 @import './styles/base.css';
 @import './styles/environment.css';
 @import './styles/chart.css';
+@import './styles/planner.css';
 @import './styles/terminal-shell.css';
 @import './styles/trading-workflow.css';
 @import './styles/neon-theme.css';
