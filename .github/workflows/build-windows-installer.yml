@@ -52,8 +52,21 @@ jobs:
         run: |
           $releaseVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $releaseTag = "v$releaseVersion"
-          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$releaseTag"
+          $headers = @{
+            Accept = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $releaseExists = $false
+          try {
+            $null = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $headers
+            $releaseExists = $true
+          } catch {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+            if ($statusCode -ne 404) { throw }
+          }
+          if ($releaseExists) {
             "release_needed=false" >> $env:GITHUB_OUTPUT
             Write-Host "Release $releaseTag already exists; no release will be replaced."
           } else {
@@ -86,8 +99,21 @@ jobs:
         run: |
           $releaseVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $releaseTag = "v$releaseVersion"
-          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) { throw "Release $releaseTag already exists; increment app version. Published releases must not be replaced." }
+          $releaseUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$releaseTag"
+          $headers = @{
+            Accept = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $releaseExists = $false
+          try {
+            $null = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $headers
+            $releaseExists = $true
+          } catch {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+            if ($statusCode -ne 404) { throw }
+          }
+          if ($releaseExists) { throw "Release $releaseTag already exists; increment app version. Published releases must not be replaced." }
           gh release create $releaseTag --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --draft --title "CRT Terminal $releaseVersion" --notes-file docs/current-release.md
           if ($LASTEXITCODE -ne 0) { throw 'Release draft creation failed' }
           $releaseFiles = @(Get-ChildItem .smartflow-runtime/release/*_x64-setup.exe,.smartflow-runtime/release/*_x64-setup.exe.sig | ForEach-Object { $_.FullName })
