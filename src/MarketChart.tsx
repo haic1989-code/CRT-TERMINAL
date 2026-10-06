@@ -19,16 +19,26 @@ import { drawingLogicalAtTime, drawingTimeAtLogical, fibonacciRetracementPrice }
 import { PositionPlannerPrimitive, plannerLogicalToCoordinate, type PlannerPrimitiveHit } from './positionPlannerPrimitive'
 import type { AlertRule, BreakEvenMode, MarketProfile } from './domain/contracts'
 import type { ReferenceLevel } from './domain/referenceLevels'
-import { clampPlannerPrice, createPlannerGeometry, snapToSymbolTick, translatePlannerGeometry, type PricePrecision } from './domain/plannerGeometry'
+import { snapToSymbolTick, translatePlannerGeometry, type PricePrecision } from './domain/plannerGeometry'
+import {
+  clampLots,
+  clampPlannerLevel,
+  createPlannerAtPrice,
+  type PlannerAccountingValues,
+  type PlannerLevel,
+  type PlannerSide,
+  type PlannerState,
+  type PlannerVolumeConstraints,
+} from './domain/chartPlanner'
 import { indicatorDefinition } from './indicators/catalog'
 import type { IndicatorId, IndicatorSettings } from './indicators/catalog'
 import { calculateIndicatorSeries, mergeLatestBar, type IndicatorBar } from './indicators/calculations'
 import type { VegaTradeProposal } from './engines/vegaContext'
+import { PlannerControlPanel } from './PlannerControlPanel'
 
 export type { IndicatorSettings } from './indicators/catalog'
 
 export type ChartTimeframe = 'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D1'
-export type PlannerSide = 'long' | 'short'
 type PlannerTargetSelection = 'tp1' | 'tp2' | 'tp3'
 export type PlannerSnapshot = { side: PlannerSide; entry: number; tp: number; tp1?: number; tp2?: number; tp3?: number; breakEven?: number; sl: number; lots: number }
 export type ManagedPositionHighlight = { id: number; symbol: string; side: PlannerSide; volume: number; entry: number; stopLoss: number; takeProfit: number; currentPrice?: number }
@@ -62,18 +72,7 @@ const TIMEFRAME_MINUTES: Record<ChartTimeframe, number> = {
   D1: 1440,
 }
 
-type PlannerLevel = 'tp' | 'tp1' | 'tp2' | 'tp3' | 'be' | 'entry' | 'sl'
-
-type PlannerState = {
-  /** Full-position take profit remains independent from the optional partial targets. */
-  tp: number
-  tp1: number | null
-  tp2: number | null
-  tp3: number | null
-  be: number | null
-  entry: number
-  sl: number
-}
+export type { PlannerSide } from './domain/chartPlanner'
 
 type PlannerTimeRange = {
   start: number
@@ -138,245 +137,26 @@ function pricePrecision(info?: Mt5SymbolInfo): PricePrecision {
   return { digits: info?.digits ?? 2, tickSize: info?.trade_tick_size || info?.point || 0.01 }
 }
 
+function plannerAccountingValues(info?: Mt5SymbolInfo): PlannerAccountingValues | undefined {
+  if (!info) return undefined
+  return {
+    tickSize: info.trade_tick_size || info.point || 0.01,
+    profitTickValue: info.trade_tick_value_profit || info.trade_tick_value || 0,
+    lossTickValue: info.trade_tick_value_loss || info.trade_tick_value || 0,
+  }
+}
+
+function plannerVolumeConstraints(info?: Mt5SymbolInfo): PlannerVolumeConstraints | undefined {
+  if (!info) return undefined
+  return {
+    min: info.volume_min || 0.01,
+    max: info.volume_max || 100,
+    step: info.volume_step || 0.01,
+  }
+}
+
 function formatSymbolPrice(price: number, info?: Mt5SymbolInfo) {
   return price.toFixed(info?.digits ?? 2)
-}
-
-function createPlannerAtPrice(entry: number, side: PlannerSide, info?: Mt5SymbolInfo, targets = { tp2: false, tp3: false }, breakEvenMode: BreakEvenMode = 'manual'): PlannerState {
-  const precision = pricePrecision(info)
-  const geometry = createPlannerGeometry(entry, side, precision)
-  const riskDistance = Math.abs(geometry.entry - geometry.stopLoss)
-  const direction = side === 'long' ? 1 : -1
-  const target = (multiple: number) => snapToSymbolTick(geometry.entry + direction * riskDistance * multiple, precision)
-  return { tp: geometry.takeProfit, tp1: null, tp2: targets.tp2 ? target(2.8) : null, tp3: targets.tp3 ? target(3.7) : null, be: breakEvenMode === 'off' ? null : geometry.entry, entry: geometry.entry, sl: geometry.stopLoss }
-}
-
-function plannerDistances(side: PlannerSide, planner: PlannerState) {
-  return side === 'long'
-    ? {
-        reward: Math.max(planner.tp - planner.entry, 0.1),
-        risk: Math.max(planner.entry - planner.sl, 0.1),
-      }
-    : {
-        reward: Math.max(planner.entry - planner.tp, 0.1),
-        risk: Math.max(planner.sl - planner.entry, 0.1),
-      }
-}
-
-function clampPlannerLevel(
-  side: PlannerSide,
-  level: PlannerLevel,
-  price: number,
-  current: PlannerState,
-  info?: Mt5SymbolInfo,
-): PlannerState {
-  const precision = pricePrecision(info)
-  if (level === 'be') return { ...current, be: snapToSymbolTick(price, precision) }
-  if (level === 'tp') {
-    const geometry = clampPlannerPrice(side, 'takeProfit', price, { entry: current.entry, stopLoss: current.sl, takeProfit: current.tp }, precision)
-    return { ...current, tp: geometry.takeProfit }
-  }
-  if (level === 'tp1' || level === 'tp2' || level === 'tp3') {
-    const targets: Array<number | null> = [current.tp1, current.tp2, current.tp3]
-    const index = level === 'tp1' ? 0 : level === 'tp2' ? 1 : 2
-    const tick = precision.tickSize > 0 ? precision.tickSize : 10 ** -precision.digits
-    const direction = side === 'long' ? 1 : -1
-    let previous = current.entry
-    for (let i = index - 1; i >= 0; i -= 1) if (targets[i] !== null) { previous = targets[i]!; break }
-    let next: number | null = null
-    for (let i = index + 1; i < targets.length; i += 1) if (targets[i] !== null) { next = targets[i]; break }
-    const min = previous * direction + tick
-    const max = next === null ? Infinity : next * direction - tick
-    const bounded = snapToSymbolTick(Math.min(max, Math.max(min, price * direction)) * direction, precision)
-    if (level === 'tp1') return { ...current, tp1: bounded }
-    if (level === 'tp2') return { ...current, tp2: bounded }
-    return { ...current, tp3: bounded }
-  }
-  const geometry = clampPlannerPrice(side, level === 'sl' ? 'stopLoss' : 'entry', price, { entry: current.entry, stopLoss: current.sl, takeProfit: current.tp }, precision)
-  return { ...current, tp: geometry.takeProfit, entry: geometry.entry, sl: geometry.stopLoss }
-}
-
-function plannerMetrics(side: PlannerSide, planner: PlannerState | null) {
-  if (!planner) return null
-  const { reward, risk } = plannerDistances(side, planner)
-  return { reward, risk, rr: reward / risk }
-}
-
-function estimatePlannerOutcome(
-  side: PlannerSide,
-  planner: PlannerState,
-  lots: number,
-  symbolInfo?: Mt5SymbolInfo
-) {
-  const metrics = plannerMetrics(side, planner)
-  if (!metrics || !symbolInfo) return null
-
-  const tickSize = symbolInfo.trade_tick_size || symbolInfo.point || 0.01
-  const profitTickValue = symbolInfo.trade_tick_value_profit || symbolInfo.trade_tick_value || 0
-  const lossTickValue = symbolInfo.trade_tick_value_loss || symbolInfo.trade_tick_value || 0
-  if (tickSize <= 0 || lots <= 0 || profitTickValue <= 0 || lossTickValue <= 0) return null
-
-  return {
-    tpMoney: (metrics.reward / tickSize) * profitTickValue * lots,
-    slMoney: (metrics.risk / tickSize) * lossTickValue * lots,
-    rr: metrics.rr,
-  }
-}
-
-function clampLots(value: number, symbolInfo?: Mt5SymbolInfo) {
-  const min = symbolInfo?.volume_min || 0.01
-  const max = symbolInfo?.volume_max || 100
-  const step = symbolInfo?.volume_step || 0.01
-  const bounded = Math.min(max, Math.max(min, value))
-  const snapped = Math.round((bounded - min) / step) * step + min
-  const precision = step < 0.01 ? 3 : step < 0.1 ? 2 : 1
-  return Number(snapped.toFixed(precision))
-}
-
-function PlannerControlPanel({
-  side,
-  placingSide,
-  planner,
-  symbol,
-  symbolInfo,
-  account,
-  lots,
-  onLotsChange,
-  onArm,
-  onClear,
-}: {
-  side: PlannerSide | null
-  placingSide: PlannerSide | null
-  planner: PlannerState | null
-  symbol?: string
-  symbolInfo?: Mt5SymbolInfo
-  account?: Mt5Account
-  lots: number
-  onLotsChange: (lots: number) => void
-  onArm: (side: PlannerSide) => void
-  onClear: () => void
-}) {
-  const metrics = side && planner ? plannerMetrics(side, planner) : null
-  const outcome = side && planner ? estimatePlannerOutcome(side, planner, lots, symbolInfo) : null
-  const status = placingSide ? 'WYBIERZ WEJŚCIE' : planner && side ? 'AKTYWNY' : 'GOTOWY'
-  const currency = account?.currency || symbolInfo?.currency_profit || 'USD'
-  const riskPct = outcome && account?.equity
-    ? (outcome.slMoney / Math.max(account.equity, 0.01)) * 100
-    : null
-  const volumeStep = symbolInfo?.volume_step || 0.01
-
-  return (
-    <section className="planner-control-panel planner-control-panel--v2" data-planner-ui="true" aria-label="Planer pozycji">
-      <div className="planner-control-panel__header planner-control-panel__header--v2">
-        <div>
-          <span className="planner-control-panel__eyebrow">SMARTFLOW · PLANER POZYCJI</span>
-          <strong>PLANER POZYCJI</strong>
-        </div>
-        <span className={`planner-control-panel__status planner-control-panel__status--${placingSide ? 'placing' : planner ? 'active' : 'off'}`}>
-          {status}
-        </span>
-      </div>
-
-      <div className="planner-control-panel__instrument">
-        <span>{symbol || 'XAUUSD'}</span>
-        <small>{side ? side.toUpperCase() : 'WYBIERZ KIERUNEK'}</small>
-      </div>
-
-      <div className="planner-control-panel__directions">
-        <button
-          type="button"
-          className={`planner-direction-button planner-direction-button--long${placingSide === 'long' || side === 'long' ? ' is-active' : ''}`}
-          onClick={() => onArm('long')}
-        >
-          <span>DŁUGA</span>
-          <small>ZYSK POWYŻEJ</small>
-        </button>
-        <button
-          type="button"
-          className={`planner-direction-button planner-direction-button--short${placingSide === 'short' || side === 'short' ? ' is-active' : ''}`}
-          onClick={() => onArm('short')}
-        >
-          <span>KRÓTKA</span>
-          <small>ZYSK PONIŻEJ</small>
-        </button>
-      </div>
-
-      {placingSide && (
-        <div className="planner-control-panel__placement">
-          <span className="planner-control-panel__placement-dot" />
-          Kliknij punkt WEJŚCIA na wykresie
-        </div>
-      )}
-
-      {!placingSide && planner && side && metrics && (
-        <>
-          <div className="planner-control-panel__trade-grid">
-            <div className="planner-control-panel__volume">
-              <span className="planner-control-panel__field-label">WOLUMEN</span>
-              <div className="planner-lot-stepper">
-                <button type="button" onClick={() => onLotsChange(clampLots(lots - volumeStep, symbolInfo))}>−</button>
-                <input
-                  aria-label="Wolumen pozycji"
-                  inputMode="decimal"
-                  value={lots}
-                  onChange={(event) => {
-                    const parsed = Number(event.target.value.replace(',', '.'))
-                    if (Number.isFinite(parsed)) onLotsChange(clampLots(parsed, symbolInfo))
-                  }}
-                />
-                <button type="button" onClick={() => onLotsChange(clampLots(lots + volumeStep, symbolInfo))}>+</button>
-              </div>
-              <small>LOT</small>
-            </div>
-
-            <div className="planner-control-panel__rr-card">
-              <span>R:R</span>
-              <strong>{metrics.rr.toFixed(2)}</strong>
-              <small>reward / risk</small>
-            </div>
-          </div>
-
-          <div className="planner-control-panel__money">
-            <div className="planner-money-card planner-money-card--profit">
-              <span>TP · SZAC. WYNIK</span>
-              <strong>{outcome ? `+${outcome.tpMoney.toFixed(2)} ${currency}` : '—'}</strong>
-              <small>{formatSymbolPrice(planner.tp, symbolInfo)}</small>
-            </div>
-            <div className="planner-money-card planner-money-card--risk">
-              <span>SL · SZAC. STRATA</span>
-              <strong>{outcome ? `−${outcome.slMoney.toFixed(2)} ${currency}` : '—'}</strong>
-              <small>
-                {formatSymbolPrice(planner.sl, symbolInfo)}
-                {riskPct !== null ? ` · ${riskPct.toFixed(2)}% equity` : ''}
-              </small>
-            </div>
-          </div>
-
-          <div className="planner-control-panel__levels">
-            <div><span>WEJŚCIE</span><strong>{formatSymbolPrice(planner.entry, symbolInfo)}</strong></div>
-            <div><span>TP</span><strong className="metric-profit">{formatSymbolPrice(planner.tp, symbolInfo)}</strong></div>
-            <div><span>SL</span><strong className="metric-risk">{formatSymbolPrice(planner.sl, symbolInfo)}</strong></div>
-          </div>
-
-          <div className="planner-control-panel__hint">
-            ŚRODEK = przesuń X/Y · KRAWĘDZIE = zmień szerokość · TP/WEJŚCIE/SL = zmień cenę
-          </div>
-        </>
-      )}
-
-      {!placingSide && !planner && (
-        <div className="planner-control-panel__hint planner-control-panel__hint--empty">
-          Wybierz pozycję długą albo krótką, a następnie kliknij punkt wejścia.
-        </div>
-      )}
-
-      {(planner || placingSide) && (
-        <button type="button" className="planner-control-panel__clear" onClick={onClear}>
-          ZAMKNIJ PLANER
-        </button>
-      )}
-    </section>
-  )
 }
 
 function feedLabel(feed: MarketFeedState) {
@@ -1418,7 +1198,7 @@ export function MarketChart({
   useEffect(() => {
     const info = feed.symbolInfo
     if (!info) return
-    setPlannerLots((current) => clampLots(current, info))
+    setPlannerLots((current) => clampLots(current, plannerVolumeConstraints(info)))
     chartRef.current?.applyOptions({ localization: { priceFormatter: (price: number) => formatSymbolPrice(price, info) } })
     candlesRef.current?.applyOptions({ priceFormat: { type: 'price', precision: info.digits, minMove: info.trade_tick_size || info.point || 10 ** -info.digits } })
   }, [feed.symbolInfo])
@@ -1517,7 +1297,7 @@ export function MarketChart({
         const level = part as PlannerLevel
         const value = startPlanner[level]
         if (value === null) return
-        next = clampPlannerLevel(side, level, value + dy, startPlanner, feed.symbolInfo)
+        next = clampPlannerLevel(side, level, value + dy, startPlanner, pricePrecision(feed.symbolInfo))
         // An entry-linked BE destination follows Entry until explicitly separated.
         if (level === 'entry' && startPlanner.be === startPlanner.entry) next = {...next, be:next.entry}
       }
@@ -1636,7 +1416,7 @@ export function MarketChart({
       const price = candles.coordinateToPrice(y)
       if (price === null || !Number.isFinite(price)) return
       const level: PlannerLevel = placingTarget
-      const next = clampPlannerLevel(side, level, price, current, feed.symbolInfo)
+      const next = clampPlannerLevel(side, level, price, current, pricePrecision(feed.symbolInfo))
       if (next === current) return
       event.preventDefault()
       event.stopPropagation()
@@ -1688,7 +1468,7 @@ export function MarketChart({
       event.stopPropagation()
 
       const side = placingSide
-      const plannerState = createPlannerAtPrice(price, side, feed.symbolInfo, plannerTargets, breakEvenMode)
+      const plannerState = createPlannerAtPrice(price, side, pricePrecision(feed.symbolInfo), plannerTargets, breakEvenMode)
       const visible = chart.timeScale().getVisibleLogicalRange()
       const visibleBars = visible ? Math.max(20, Number(visible.to) - Number(visible.from)) : 300
       const widthBars = Math.max(18, Math.round(visibleBars * .22), Math.ceil(180 * visibleBars / Math.max(1, chart.timeScale().width())))
@@ -2002,9 +1782,13 @@ export function MarketChart({
         placingSide={placingSide}
         planner={planner}
         symbol={feed.symbol}
-        symbolInfo={feed.symbolInfo}
-        account={feed.account}
+        currency={feed.account?.currency || feed.symbolInfo?.currency_profit || 'USD'}
+        equity={feed.account?.equity}
         lots={plannerLots}
+        volumeStep={feed.symbolInfo?.volume_step || 0.01}
+        accountingValues={plannerAccountingValues(feed.symbolInfo)}
+        volumeConstraints={plannerVolumeConstraints(feed.symbolInfo)}
+        formatPrice={(price) => formatSymbolPrice(price, feed.symbolInfo)}
         onLotsChange={(lots) => { setPlannerLots(lots); setPlannerDirty(true) }}
         onArm={armPlanner}
         onClear={clearPlanner}
