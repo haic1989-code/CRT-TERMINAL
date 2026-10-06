@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MarketChart, type ChartTimeframe, type MarketFeedState, type MarketProfileView, type PlannerSide, type PlannerSnapshot } from './MarketChart'
 import './dragon-terminal.css'
 import './dragon-frames.css'
@@ -26,7 +26,8 @@ import { ModuleDrawer } from './ModuleDrawer'
 import { candleRemainingSeconds, formatCountdown, formatMt5ServerTime } from './domain/telemetry'
 import { calculateReferenceLevels, type ReferenceLevelGroup } from './domain/referenceLevels'
 import { allocateTargetLots } from './domain/targetAllocations'
-import { BottomTradingPanel, type BottomTab } from './BottomTradingPanel'
+import { BottomTradingPanel } from './BottomTradingPanel'
+import { useBottomPanelState } from './hooks/useBottomPanelState'
 
 const QUICK_SYMBOLS = ['XAUUSD', 'BTCUSD', 'DJ30'] as const
 const TIMEFRAMES: ChartTimeframe[] = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
@@ -34,7 +35,6 @@ const CONTEXT_TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'] as const
 type ContextTimeframe = typeof CONTEXT_TIMEFRAMES[number]
 type DrawerId = 'planner' | 'risk' | 'fx' | 'profile' | 'drawing' | 'indicators' | 'alerts' | 'instruments' | 'context' | null
 
-const BOTTOM_PANEL_KEY = 'smartflow-x:bottom-panel:v1'
 const ALERTS_KEY = 'smartflow-x:alerts:v1'
 const ALERT_EVENTS_KEY = 'smartflow-x:alert-events:v1'
 const PRICE_LEVEL_GROUPS_KEY = 'smartflow-x:dragon-price-level-groups:v1'
@@ -51,22 +51,6 @@ const DRAWING_TOOLS = [
   { id: 'fib', label: 'Fibo' },
   { id: 'rectangle', label: 'Strefa' },
 ] as const
-type BottomPanelPersistedState = { tab: BottomTab; expanded: boolean; height: number }
-
-function readBottomPanelState(storageKey = BOTTOM_PANEL_KEY, maxHeightRatio = 0.65): BottomPanelPersistedState {
-  const fallback: BottomPanelPersistedState = { tab: 'positions', expanded: false, height: 230 }
-  if (typeof window === 'undefined') return fallback
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || 'null') as Partial<BottomPanelPersistedState> | null
-    const tab: BottomTab = parsed?.tab === 'orders' || parsed?.tab === 'account' ? parsed.tab : 'positions'
-    const expanded = Boolean(parsed?.expanded)
-    const height = Math.max(180, Math.min(window.innerHeight * maxHeightRatio, Number(parsed?.height) || 230))
-    return { tab, expanded, height }
-  } catch {
-    return fallback
-  }
-}
-
 function readStoredAlerts(): AlertRule[] {
   if (typeof window === 'undefined') return []
   try {
@@ -128,7 +112,6 @@ function brokerLotDescription(info: Mt5SymbolInfo | undefined, lots: number) {
 export function SmartFlowShell() {
   const dragon = new URLSearchParams(window.location.search).get("ui") !== "legacy"
   const [agentAssetMissing, setAgentAssetMissing] = useState(false)
-  const bottomStorageKey = dragon ? "smartflow-x:dragon-bottom-panel:v2" : BOTTOM_PANEL_KEY
   const [terminalFocus, setTerminalFocus] = useState<TerminalFocus>('all')
   const [consoleNotice, setConsoleNotice] = useState<{text:string; id:number} | null>(null)
   const [ambientMotionPaused, setAmbientMotionPaused] = useState(false)
@@ -175,10 +158,7 @@ export function SmartFlowShell() {
   const [contextObservedAt, setContextObservedAt] = useState(0)
   const [drawer, setDrawer] = useState<DrawerId>(null)
   const [instrumentPromptOpen, setInstrumentPromptOpen] = useState(false)
-  const [initialBottomPanel] = useState(() => readBottomPanelState(bottomStorageKey, dragon ? 0.38 : 0.65))
-  const [bottomTab, setBottomTab] = useState<BottomTab>(initialBottomPanel.tab)
-  const [bottomExpanded, setBottomExpanded] = useState(initialBottomPanel.expanded)
-  const [bottomHeight, setBottomHeight] = useState(initialBottomPanel.height)
+  const { tab: bottomTab, setTab: setBottomTab, expanded: bottomExpanded, setExpanded: setBottomExpanded, height: bottomHeight, startResize: startBottomResize } = useBottomPanelState(dragon)
   const [selectedPositionTicket, setSelectedPositionTicket] = useState<number | null>(null)
   const [selectedOrderTicket, setSelectedOrderTicket] = useState<number | null>(null)
   const [planner, setPlanner] = useState<PlannerSnapshot | null>(null)
@@ -397,11 +377,6 @@ export function SmartFlowShell() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [drawer, bottomExpanded, dragon])
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(bottomStorageKey, JSON.stringify({ tab: bottomTab, expanded: bottomExpanded, height: bottomHeight }))
-    } catch { /* persistence is best-effort */ }
-  }, [bottomTab, bottomExpanded, bottomHeight, bottomStorageKey])
   useEffect(() => {
     activeAlertsRef.current = activeAlerts
     try { window.localStorage.setItem(ALERTS_KEY, JSON.stringify(activeAlerts)) } catch { /* persistence is best-effort */ }
@@ -629,27 +604,6 @@ export function SmartFlowShell() {
     setAlertDraft(String(rule.level))
     setAlertCondition(rule.condition)
     setDrawer('alerts')
-  }
-  const startBottomResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    const startY = event.clientY
-    const panel = event.currentTarget.closest('.sf-bottom-panel')
-    const parentHeight = panel?.parentElement?.getBoundingClientRect().height ?? window.innerHeight
-    const minHeight = dragon ? Math.min(180, parentHeight * 0.25) : parentHeight * 0.55
-    const maxHeight = parentHeight * (dragon ? 0.38 : 0.65)
-    const startHeight = Math.max(panel?.getBoundingClientRect().height ?? bottomHeight, minHeight)
-    setBottomExpanded(true)
-    setBottomHeight(startHeight)
-    const move = (moveEvent: PointerEvent) => setBottomHeight(Math.max(minHeight, Math.min(maxHeight, startHeight + startY - moveEvent.clientY)))
-    const stop = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', stop)
-      window.removeEventListener('pointercancel', stop)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', stop, { once: true })
-    window.addEventListener('pointercancel', stop, { once: true })
   }
   const selectPosition = (position: Mt5Position) => {
     setSelectedPositionTicket(position.ticket)
