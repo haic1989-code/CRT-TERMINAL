@@ -1,3 +1,10 @@
+# CRT Terminal 0.1.41
+
+- Frontend cleanup completes the MarketChart modularization: chart construction, indicator lifecycle, drawing interactions and planner interactions are extracted into focused modules.
+- CSS is split by terminal area, and confirmed-unused selectors were removed after checking runtime imports, dynamic states and visual coverage.
+- No UI redesign, trading logic, FX Replay calculations, Planner semantics, drawing behavior or MT5 bridge protocol changes are intended.
+- Validation: JavaScript unit tests, TypeScript/Vite build, Python bridge tests and syntax checks, Playwright visual tests, and `npm audit` passed in CI. Windows installation and in-app update acceptance remain unverified.
+
 # CRT Terminal 0.1.40
 
 - FX Replay history selection defaults to full local calendar days: the beginning of the first selected date through the last millisecond of the final selected date, inclusive. The default range is the last seven completed days, ending yesterday.
