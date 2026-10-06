@@ -10,12 +10,14 @@ import {
 import { createMarketChart } from './chart/createMarketChart'
 import { fetchMt5Bars, type Mt5Account, type Mt5MarketSession, type Mt5SymbolInfo } from './mt5Client'
 import { useChartIndicators, type IndicatorSeriesEntry } from './hooks/useChartIndicators'
+import { useChartDrawingInteractions } from './hooks/useChartDrawingInteractions'
 import { getIndicatorBars } from './indicators/chartBars'
-import { drawingLogicalAtTime, drawingTimeAtLogical, fibonacciRetracementPrice } from './domain/drawingGeometry'
+import { drawingLogicalAtTime, fibonacciRetracementPrice } from './domain/drawingGeometry'
 import { PositionPlannerPrimitive, plannerLogicalToCoordinate, type PlannerPrimitiveHit } from './positionPlannerPrimitive'
 import type { AlertRule, BreakEvenMode, MarketProfile } from './domain/contracts'
 import type { ReferenceLevel } from './domain/referenceLevels'
 import { snapToSymbolTick, translatePlannerGeometry, type PricePrecision } from './domain/plannerGeometry'
+import { DRAWING_POINT_COUNTS, type ChartAnnotation, type ChartAnnotationKind, type ChartDrawingPoint, type ChartDrawingStore } from './domain/chartDrawings'
 import {
   clampLots,
   clampPlannerLevel,
@@ -73,13 +75,8 @@ type PlannerTimeRange = {
   end: number
 }
 
-type ChartDrawingPoint = { time: UTCTimestamp; price: number }
-type ChartAnnotationKind = 'vertical' | 'horizontal' | 'trend' | 'ray' | 'rectangle' | 'channel' | 'measure' | 'fib' | 'text'
-type ChartAnnotation = { id: string; kind: ChartAnnotationKind; points: ChartDrawingPoint[]; label?: string }
-type ChartDrawingStore = Record<string, ChartAnnotation[]>
 
 const DRAWINGS_STORAGE_KEY = 'smartflow-x:drawings:v1'
-const DRAWING_POINT_COUNTS: Record<ChartAnnotationKind, number> = { vertical: 1, horizontal: 1, trend: 2, ray: 2, rectangle: 2, channel: 3, measure: 2, fib: 2, text: 1 }
 
 function isStoredChartAnnotation(value: unknown): value is ChartAnnotation {
   if (!value || typeof value !== 'object') return false
@@ -252,7 +249,6 @@ export function MarketChart({
   const indicatorSeriesRef = useRef<IndicatorSeriesEntry[]>([])
   const volumeSeriesRef = useRef<any>(null)
   const volumeDataRef = useRef<Array<{ time: UTCTimestamp; value: number; color: string }>>([])
-  const drawingSequenceRef = useRef<ChartDrawingPoint[]>([])
 
   const [data, setData] = useState<CandlestickData<UTCTimestamp>[]>([])
   const [volumeData, setVolumeData] = useState<Array<{ time: UTCTimestamp; value: number; color: string }>>([])
@@ -282,19 +278,32 @@ export function MarketChart({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedDrawing, drawingsOpen, drawingRequest, drawingScope])
-  const [drawingRevision, setDrawingRevision] = useState(0)
-  const [drawingAnchors, setDrawingAnchors] = useState<ChartDrawingPoint[]>([])
-  const [drawingCursor, setDrawingCursor] = useState<ChartDrawingPoint | null>(null)
-  const drawingGestureRef = useRef<{ pointerId: number; x: number; y: number; dragged: boolean } | null>(null)
-  const drawingActiveRef = useRef(false)
-  const drawingMoveFrameRef = useRef<number | null>(null)
   const drawingClipId = useId().replace(/:/g, '')
   const drawingKind = drawingRequest && Object.prototype.hasOwnProperty.call(DRAWING_POINT_COUNTS, drawingRequest.tool) ? drawingRequest.tool as ChartAnnotationKind : null
-  const syncDrawingCoordinates = () => {
-    if (drawingMoveFrameRef.current !== null) return
-    drawingMoveFrameRef.current = window.requestAnimationFrame(() => { drawingMoveFrameRef.current = null; setDrawingRevision(value => value + 1) })
-  }
-  useEffect(() => () => { if (drawingMoveFrameRef.current !== null) window.cancelAnimationFrame(drawingMoveFrameRef.current) }, [])
+  const drawingInteractions = useChartDrawingInteractions({
+    rootRef,
+    chartRef,
+    candlesRef,
+    data,
+    timeframe,
+    drawingRequest,
+    drawingKind,
+    setAnnotations: setChartAnnotations,
+    onDrawingComplete,
+  })
+  const {
+    drawingRevision,
+    drawingAnchors,
+    drawingCursor,
+    drawingSequenceRef,
+    drawingGestureRef,
+    drawingActiveRef,
+    syncDrawingCoordinates,
+    invalidateDrawing,
+    resetDrawing,
+    handleDrawingMove,
+    handleDrawingUp,
+  } = drawingInteractions
   const liveHistoryRef = useRef<CandlestickData<UTCTimestamp>[]>([])
   const [lastBar, setLastBar] = useState<CandlestickData<UTCTimestamp> | null>(null)
   const [phosphorPulse, setPhosphorPulse] = useState<{ id: number; time: UTCTimestamp; price: number } | null>(null)
@@ -708,7 +717,7 @@ export function MarketChart({
     container.addEventListener('wheel', handleMt5Wheel, { passive: false })
 
     scheduleSync()
-    const scheduleDrawingSync = () => scheduleFrame(() => setDrawingRevision((revision) => revision + 1))
+    const scheduleDrawingSync = () => scheduleFrame(() => invalidateDrawing())
     chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleSync)
     chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleDrawingSync)
     chart.subscribeCrosshairMove(scheduleSync)
@@ -971,10 +980,7 @@ export function MarketChart({
   }, [cancelRequest?.nonce])
 
   useEffect(() => {
-    drawingSequenceRef.current = []
-    setDrawingAnchors([])
-    setDrawingCursor(null)
-    drawingGestureRef.current = null
+    resetDrawing()
     drawingActiveRef.current = Boolean(drawingRequest)
     const chart = chartRef.current
     chart?.applyOptions({ handleScroll: { pressedMouseMove: !drawingRequest, horzTouchDrag: !drawingRequest }, handleScale: { axisPressedMouseMove: !drawingRequest, pinch: !drawingRequest } })
@@ -1166,60 +1172,6 @@ export function MarketChart({
   }
   useEffect(() => () => { plannerGestureCleanupRef.current?.(false, false) }, [symbol, timeframe])
 
-  const readDrawingPoint = (clientX: number, clientY: number): ChartDrawingPoint | null => {
-    const root = rootRef.current
-    const chart = chartRef.current
-    const candles = candlesRef.current
-    if (!root || !chart || !candles || !data.length) return null
-    const rect = root.getBoundingClientRect()
-    const x = clientX - rect.left
-    const y = clientY - rect.top
-    const plotHeight = chart.panes()[0]?.getHeight() ?? rect.height
-    if (x < 0 || x > chart.timeScale().width() || y < 0 || y > plotHeight) return null
-    const price = candles.coordinateToPrice(y)
-    const logical = chart.timeScale().coordinateToLogical(x)
-    const directTime = chart.timeScale().coordinateToTime(x)
-    const time = directTime ?? (logical === null ? null : drawingTimeAtLogical(Number(logical), data, TIMEFRAME_MINUTES[timeframe] * 60))
-    return price === null || time === null || !Number.isFinite(price) ? null : { time: time as UTCTimestamp, price }
-  }
-  const addDrawingPoint = (point: ChartDrawingPoint) => {
-    if (!drawingKind) return
-    const previous = drawingSequenceRef.current.at(-1)
-    if (previous && previous.time === point.time && Math.abs(previous.price - point.price) < 1e-9) return
-    const points = [...drawingSequenceRef.current, point]
-    const required = DRAWING_POINT_COUNTS[drawingKind]
-    if (points.length < required) {
-      drawingSequenceRef.current = points
-      setDrawingAnchors(points)
-      setDrawingCursor(point)
-      return
-    }
-    setChartAnnotations(current => [...current, { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, kind: drawingKind, points, label: drawingKind === 'text' ? drawingRequest?.label?.trim() : undefined }])
-    drawingSequenceRef.current = []
-    setDrawingAnchors([])
-    setDrawingCursor(null)
-    drawingGestureRef.current = null
-    onDrawingComplete?.('saved')
-  }
-  const handleDrawingMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    syncDrawingCoordinates()
-    if (!drawingRequest) return
-    event.stopPropagation()
-    const point = readDrawingPoint(event.clientX, event.clientY)
-    setDrawingCursor(point)
-    const gesture = drawingGestureRef.current
-    if (gesture && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= 5) gesture.dragged = true
-  }
-  const handleDrawingUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drawingRequest) return
-    event.stopPropagation()
-    const gesture = drawingGestureRef.current
-    drawingGestureRef.current = null
-    if (!gesture || gesture.pointerId !== event.pointerId || !gesture.dragged) return
-    const point = readDrawingPoint(event.clientX, event.clientY)
-    if (point) addDrawingPoint(point)
-  }
-
   const handleRootPointerDownCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
 
@@ -1268,20 +1220,7 @@ export function MarketChart({
     const localX = event.clientX - rect.left
     const localY = event.clientY - rect.top
 
-    if (drawingRequest) {
-      event.preventDefault()
-      event.stopPropagation()
-      if (drawingRequest.tool === 'erase' || drawingRequest.tool === 'clear') return
-      const point = readDrawingPoint(event.clientX, event.clientY)
-      if (!point || !drawingKind) return
-      const isFirstPoint = drawingSequenceRef.current.length === 0
-      addDrawingPoint(point)
-      if (isFirstPoint && DRAWING_POINT_COUNTS[drawingKind] === 2) {
-        drawingGestureRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, dragged: false }
-        event.currentTarget.setPointerCapture(event.pointerId)
-      }
-      return
-    }
+    if (drawingInteractions.handleDrawingDown(event)) return
 
 
     if (placingSide) {
@@ -1447,7 +1386,7 @@ export function MarketChart({
       onPointerDownCapture={handleRootPointerDownCapture}
       onPointerMoveCapture={handleDrawingMove}
       onPointerUpCapture={handleDrawingUp}
-      onPointerCancel={() => { drawingGestureRef.current = null; drawingSequenceRef.current = []; setDrawingAnchors([]); setDrawingCursor(null) }}
+      onPointerCancel={drawingInteractions.handleDrawingCancel}
     >
       <div ref={containerRef} className="market-chart__canvas" />
       {rangeScanId > 0 && <div key={`scan-${rangeScanId}`} className={`crt-range-scan${rangeScanDetected ? ' is-detected' : ''}`} style={scanRangeStyle} aria-hidden="true"><span className="crt-range-scan-beam" /><span className="crt-range-scan-label">PODGLĄD ANIMACJI · BEZ ANALIZY WYBICIA</span></div>}
