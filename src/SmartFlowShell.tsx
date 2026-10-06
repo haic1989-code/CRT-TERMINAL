@@ -26,6 +26,7 @@ import { ModuleDrawer } from './ModuleDrawer'
 import { candleRemainingSeconds, formatCountdown, formatMt5ServerTime } from './domain/telemetry'
 import { calculateReferenceLevels, type ReferenceLevelGroup } from './domain/referenceLevels'
 import { allocateTargetLots } from './domain/targetAllocations'
+import { BottomTradingPanel, type BottomTab } from './BottomTradingPanel'
 
 const QUICK_SYMBOLS = ['XAUUSD', 'BTCUSD', 'DJ30'] as const
 const TIMEFRAMES: ChartTimeframe[] = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
@@ -50,7 +51,6 @@ const DRAWING_TOOLS = [
   { id: 'fib', label: 'Fibo' },
   { id: 'rectangle', label: 'Strefa' },
 ] as const
-type BottomTab = 'positions' | 'orders' | 'account'
 type BottomPanelPersistedState = { tab: BottomTab; expanded: boolean; height: number }
 
 function readBottomPanelState(storageKey = BOTTOM_PANEL_KEY, maxHeightRatio = 0.65): BottomPanelPersistedState {
@@ -796,7 +796,7 @@ export function SmartFlowShell() {
         {!dragon && <section className={'sf-bottom-panel ' + (bottomExpanded ? 'expanded' : '')} style={{ '--sf-bottom-height-base': bottomExpanded ? bottomHeight + 'px' : '150px' } as CSSProperties} data-bottom-height={bottomHeight}>
           <button type="button" className="sf-bottom-resize" aria-label="Zmień wysokość dolnego panelu" onPointerDown={startBottomResize}><span /></button>
           <div className="sf-bottom-tabs"><button className={bottomTab === 'positions' ? 'active' : ''} onClick={() => { setBottomTab('positions'); setBottomExpanded(true) }}>POZYCJE <small>({positions.length})</small></button><button className={bottomTab === 'orders' ? 'active' : ''} onClick={() => { setBottomTab('orders'); setBottomExpanded(true) }}>ZLECENIA <small>({orders.length})</small></button><button className={bottomTab === 'account' ? 'active' : ''} onClick={() => { setBottomTab('account'); setBottomExpanded(true) }}>KONTO</button><button className="sf-expand-bottom" onClick={() => setBottomExpanded((value) => !value)}>{bottomExpanded ? '⌄' : '⌃'}</button></div>
-          <BottomTable expanded={bottomExpanded} tab={bottomTab} positions={positions} orders={orders} account={account} symbol={symbol} selectedPositionTicket={selectedPositionTicket} selectedOrderTicket={selectedOrderTicket} onSelectPosition={selectPosition} onSelectOrder={selectOrder} />
+          <BottomTradingPanel expanded={bottomExpanded} tab={bottomTab} positions={positions} orders={orders} account={account} symbol={symbol} selectedPositionTicket={selectedPositionTicket} selectedOrderTicket={selectedOrderTicket} onSelectPosition={selectPosition} onSelectOrder={selectOrder} />
         </section>}
       </section>
       <aside className={dragon ? 'sf-right-column matrix-text-column' : 'sf-right-column'}>
@@ -862,56 +862,3 @@ export function SmartFlowShell() {
 
 function Metric({ label, value, positive }: { label: string; value: string; positive?: boolean }) { return <div className="sf-metric"><small>{label}</small><strong className={positive ? 'positive' : ''}>{value}</strong></div> }
 function Field({ label, value, green, red }: { label: string; value: string; green?: boolean; red?: boolean }) { return <div className="sf-field"><span>{label}</span><b className={green ? 'positive' : red ? 'negative' : ''}>{value}</b></div> }
-
-type BottomTableProps = {
-  expanded: boolean
-  tab: BottomTab
-  positions: Mt5Position[]
-  orders: Mt5Order[]
-  account: any
-  symbol: string
-  selectedPositionTicket: number | null
-  selectedOrderTicket: number | null
-  onSelectPosition: (position: Mt5Position) => void
-  onSelectOrder: (order: Mt5Order) => void
-}
-
-function AccountSummary({ account }: { account: any }) {
-  const metrics: [string, string][] = [
-    ['BALANCE', money(account?.balance, account?.currency)],
-    ['EQUITY', money(account?.equity, account?.currency)],
-    ['MARGIN', money(account?.margin, account?.currency)],
-    ['FREE MARGIN', money(account?.margin_free, account?.currency)],
-    ['FLOATING P&L', money(account?.profit, account?.currency)],
-    ['MARGIN LEVEL', account?.margin_level ? account.margin_level.toFixed(1) + '%' : '—'],
-  ]
-  return <div className="sf-account-row">{metrics.map(([label, value]) => <div key={label}><small>{label}</small><b>{value}</b></div>)}</div>
-}
-
-function PositionsTable({ positions, account, symbol, selectedPositionTicket, onSelectPosition }: Pick<BottomTableProps, 'positions' | 'account' | 'symbol' | 'selectedPositionTicket' | 'onSelectPosition'>) {
-  return <table className="sf-table"><thead><tr><th>SYMBOL</th><th>TYPE</th><th>VOLUME</th><th>ENTRY</th><th>P&amp;L ({account?.currency || 'USD'})</th><th>SL</th><th>TP</th><th>SWAP / COMM.</th><th>STATUS</th></tr></thead><tbody>
-    {positions.length ? positions.map((position) => <tr key={position.ticket} data-position-ticket={position.ticket} className={selectedPositionTicket === position.ticket ? 'sf-row-selected' : ''} tabIndex={0} onClick={() => onSelectPosition(position)} onKeyDown={(event) => { if (event.key === 'Enter') onSelectPosition(position) }}>
-      <td>{position.symbol}</td><td className={position.type === 'buy' ? 'positive' : 'negative'}>{position.type.toUpperCase()}</td><td>{position.volume.toFixed(2)}</td><td>{compact(position.price_open)}</td><td className={position.profit >= 0 ? 'positive' : 'negative'}>{money(position.profit, account?.currency)}</td><td>{position.sl ? compact(position.sl) : '—'}</td><td>{position.tp ? compact(position.tp) : '—'}</td><td>{money(position.swap + position.commission, account?.currency)}</td><td>OPEN</td>
-    </tr>) : <tr><td colSpan={9} className="sf-empty-row">Brak otwartych pozycji · {symbol} · bridge tylko do odczytu</td></tr>}
-  </tbody></table>
-}
-
-function OrdersTable({ orders, selectedOrderTicket, onSelectOrder }: Pick<BottomTableProps, 'orders' | 'selectedOrderTicket' | 'onSelectOrder'>) {
-  return <table className="sf-table"><thead><tr><th>SYMBOL</th><th>TICKET</th><th>TYPE</th><th>VOLUME</th><th>TRIGGER PRICE</th><th>SL</th><th>TP</th><th>STATUS</th></tr></thead><tbody>
-    {orders.length ? orders.map((order) => <tr key={order.ticket} data-order-ticket={order.ticket} className={selectedOrderTicket === order.ticket ? 'sf-row-selected' : ''} tabIndex={0} onClick={() => onSelectOrder(order)} onKeyDown={(event) => { if (event.key === 'Enter') onSelectOrder(order) }}>
-      <td>{order.symbol}</td><td>{order.ticket}</td><td>{order.type}</td><td>{order.volume_initial.toFixed(2)}</td><td>{compact(order.price_open)}</td><td>{order.sl ? compact(order.sl) : '—'}</td><td>{order.tp ? compact(order.tp) : '—'}</td><td>PENDING</td>
-    </tr>) : <tr><td colSpan={8} className="sf-empty-row">Brak oczekujących zleceń z bridge MT5</td></tr>}
-  </tbody></table>
-}
-
-function BottomTable({ expanded, tab, positions, orders, account, symbol, selectedPositionTicket, selectedOrderTicket, onSelectPosition, onSelectOrder }: BottomTableProps) {
-  if (!expanded && tab === 'account') return <AccountSummary account={account} />
-  if (!expanded && tab === 'orders') return <OrdersTable orders={orders} selectedOrderTicket={selectedOrderTicket} onSelectOrder={onSelectOrder} />
-  if (!expanded) return <PositionsTable positions={positions} account={account} symbol={symbol} selectedPositionTicket={selectedPositionTicket} onSelectPosition={onSelectPosition} />
-
-  return <div className="sf-bottom-workspace" data-active-tab={tab}>
-    <section className={'sf-bottom-section sf-bottom-positions' + (tab === 'positions' ? ' active' : '')} data-bottom-section="positions"><header><strong>POSITIONS</strong><span>{positions.length} OPEN</span></header><div><PositionsTable positions={positions} account={account} symbol={symbol} selectedPositionTicket={selectedPositionTicket} onSelectPosition={onSelectPosition} /></div></section>
-    <section className={'sf-bottom-section sf-bottom-orders' + (tab === 'orders' ? ' active' : '')} data-bottom-section="orders"><header><strong>ORDERS</strong><span>{orders.length} PENDING</span></header><div><OrdersTable orders={orders} selectedOrderTicket={selectedOrderTicket} onSelectOrder={onSelectOrder} /></div></section>
-    <section className={'sf-bottom-section sf-bottom-account' + (tab === 'account' ? ' active' : '')} data-bottom-section="account"><header><strong>ACCOUNT SUMMARY</strong><span>{account?.currency || 'USD'}</span></header><AccountSummary account={account} /></section>
-  </div>
-}
