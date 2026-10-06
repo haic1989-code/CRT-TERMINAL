@@ -1,3 +1,11 @@
+# CRT Terminal 0.1.42
+
+- Execution confirmation now shows the bridge's HTTP status, backend error code and broker explanation instead of hiding them behind a generic handshake message.
+- Bridge protocol/instance failures remain visible as handshake errors. Network transport failures are labeled separately and do not imply that an order was sent.
+- MT5 preflight and send exceptions are retained as bounded diagnostics without tracebacks. A send exception remains `UNKNOWN`; reconciliation is required and automatic resend stays disabled.
+- DEMO-only, owning desktop session, authentication token, durable request journal, idempotency, risk checks and one-shot send controls are unchanged.
+- Validation: focused TypeScript tests, bridge Python tests, and production frontend build passed locally. CI and signed Windows/update acceptance remain pending.
+
 # CRT Terminal 0.1.41
 
 - Frontend cleanup completes the MarketChart modularization: chart construction, indicator lifecycle, drawing interactions and planner interactions are extracted into focused modules.

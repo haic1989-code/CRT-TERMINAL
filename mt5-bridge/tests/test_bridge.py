@@ -255,6 +255,16 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(result["shutdown_token"], bridge._shutdown_token)
         initialize.assert_not_called()
 
+    def test_execution_diagnostic_keeps_mt5_exception_without_a_traceback(self):
+        from execution import backend_exception_message, backend_http_error_message
+
+        error = RuntimeError("order_check failed: invalid stops")
+        self.assertEqual(backend_exception_message(error), "RuntimeError: order_check failed: invalid stops")
+        self.assertEqual(backend_exception_message(RuntimeError("  connection\n lost  ")), "RuntimeError: connection lost")
+        self.assertEqual(backend_exception_message(RuntimeError("x" * 500)), f"RuntimeError: {'x' * 400}")
+        self.assertEqual(backend_http_error_message({"error": "ORDER_CHECK_REJECTED", "hint": "Broker odrzucił sprawdzenie: 10016 · invalid stops"}),
+                         "ORDER_CHECK_REJECTED: Broker odrzucił sprawdzenie: 10016 · invalid stops")
+
 
 if __name__ == "__main__":
     unittest.main()

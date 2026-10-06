@@ -11,6 +11,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
   const [status, setStatus] = useState<ExecutionStatus | null>(null)
   const [record, setRecord] = useState<ExecutionRecord | null>(null)
   const [notice, setNotice] = useState('Sprawdzam uprawnienia konta DEMO…')
+  const [showNotice, setShowNotice] = useState(false)
   const [busy, setBusy] = useState(false)
   const lock = useRef(false), mounted = useRef(true)
   const recoveryId = useRef<string | null>(null)
@@ -41,7 +42,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
             if (result.state === 'RECONCILED') onComplete(result.message)
           }
         } else setNotice(current => current === 'Sprawdzam uprawnienia konta DEMO…' ? 'Luna › Plan wyśle się dopiero po Twoim potwierdzeniu.' : current)
-      } catch (error) { if (!cancelled && mounted.current) { setStatus(null); setNotice(message(error)) } }
+      } catch (error) { if (!cancelled && mounted.current) { setStatus(null); setNotice(message(error)); setShowNotice(true) } }
       finally { lock.current = false }
     }
     void refresh()
@@ -64,7 +65,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
   const run = async (action: () => Promise<void>) => {
     if (lock.current) return
     lock.current = true; setBusy(true)
-    try { await action() } catch (error) { setNotice(message(error)) }
+    try { await action() } catch (error) { setNotice(message(error)); setShowNotice(true) }
     finally { lock.current = false; if (mounted.current) setBusy(false) }
   }
   const confirm = () => void run(async () => {
@@ -93,9 +94,10 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     catch (error) {
       setRecord({ ...prepared, state: 'UNKNOWN' })
       setNotice(`Luna › Wynik wysyłki jest niepewny. Nie ponawiam zlecenia. ${message(error)}`)
+      setShowNotice(true)
       return
     }
-    setRecord(result); setNotice(result.message)
+    setRecord(result); setNotice(result.message); setShowNotice(true)
     if (!unresolvedExecution(result)) {
       recoveryId.current = null
       try { localStorage.removeItem(STORAGE) } catch { /* server result is already known */ }
@@ -107,7 +109,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     const id = record?.clientRequestId || recoveryId.current
     if (!id) return
     const result = await readExecution(id)
-    setRecord(result); setNotice(result.message)
+    setRecord(result); setNotice(result.message); setShowNotice(true)
     if (!unresolvedExecution(result)) {
       recoveryId.current = null
       try { localStorage.removeItem(STORAGE) } catch { /* server result is already known */ }
@@ -118,7 +120,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
   if (!confirmationOpen && !unresolved) return null
   return <section className="demo-execution luna-trade-confirm" aria-label="Potwierdzenie zlecenia DEMO przez Lunę">
     <h3>{unresolved ? 'LUNA · UZGADNIAM WYNIK' : 'LUNA · POTWIERDZENIE POZYCJI'}</h3>
-    <p className="execution-luna" role="status">Luna › {unresolved ? notice : `Czy wysłać ${kind === 'buy_limit' ? 'BUY LIMIT' : 'SELL LIMIT'} na koncie DEMO?`}</p>
+    <p className="execution-luna" role="status">Luna › {unresolved || showNotice ? notice : `Czy wysłać ${kind === 'buy_limit' ? 'BUY LIMIT' : 'SELL LIMIT'} na koncie DEMO?`}</p>
     {confirmationOpen && planner && <div className="execution-review">
       <strong>{feed.symbol || 'SYMBOL'} · {kind === 'buy_limit' ? 'BUY LIMIT' : 'SELL LIMIT'} · {planner.side === 'long' ? 'DŁUGA' : 'KRÓTKA'}</strong>
       <dl>{[['Wolumen', `${volume ?? '—'} lot`], ['Wejście', planner.entry], ['SL', planner.sl], ['Pełny TP', planner.tp]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>

@@ -13,6 +13,40 @@ export type ExecutionPlan = {
   clientRequestId: string; accountLogin: number; accountServer: string; symbol: string; side: 'buy' | 'sell'
   kind: 'market' | 'buy_limit' | 'sell_limit'; volume: number; entry: number; sl: number; tp: number; quote: number; deviationPoints: number
 }
+
+type ErrorPayload = { detail?: unknown; error?: unknown; hint?: unknown; message?: unknown }
+const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+
+/** Keep the bridge's actual diagnostic visible while retaining the HTTP status. */
+export function executionBackendError(payload: unknown, status: number): string {
+  const root = isObject(payload) ? payload as ErrorPayload : undefined
+  const detail = root && 'detail' in root ? root.detail : payload
+  if (typeof detail === 'string' && detail.trim()) return `Backend HTTP ${status}: ${detail.trim()}`
+  if (Array.isArray(detail)) {
+    const problems = detail.slice(0, 5).map(item => {
+      if (!isObject(item)) return ''
+      const location = Array.isArray(item.loc) ? item.loc.map(String).join('.') : ''
+      const message = typeof item.msg === 'string' ? item.msg : ''
+      return [location, message].filter(Boolean).join(': ')
+    }).filter(Boolean)
+    if (problems.length) return `Backend HTTP ${status}: ${problems.join(' · ')}`
+  }
+  if (isObject(detail)) {
+    const code = typeof detail.error === 'string' && detail.error.trim() ? detail.error.trim() : ''
+    const hint = typeof detail.hint === 'string' && detail.hint.trim() ? detail.hint.trim() : ''
+    const backendMessage = typeof detail.message === 'string' && detail.message.trim() ? detail.message.trim() : ''
+    const explanation = hint || backendMessage
+    if (code || explanation) return `Backend HTTP ${status}${code ? ` · ${code}` : ''}${explanation ? `: ${explanation}` : ''}`
+  }
+  if (root) {
+    const code = typeof root.error === 'string' && root.error.trim() ? root.error.trim() : ''
+    const explanation = typeof root.hint === 'string' && root.hint.trim() ? root.hint.trim()
+      : typeof root.message === 'string' && root.message.trim() ? root.message.trim() : ''
+    if (code || explanation) return `Backend HTTP ${status}${code ? ` · ${code}` : ''}${explanation ? `: ${explanation}` : ''}`
+  }
+  return `Backend zwrócił HTTP ${status} bez czytelnego szczegółu.`
+}
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const endpoint = await resolveBridgeEndpoint()
   if (!endpoint.execution_token || !endpoint.instance || endpoint.owner === 'manual') throw new Error('Mogę wysyłać zlecenia tylko z zainstalowanego terminalu i jego własnego mostu MT5.')
@@ -21,19 +55,35 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'X-CRT-Instance': endpoint.instance, 'X-CRT-Execution': endpoint.execution_token, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  }) } catch { throw new Error('Straciłam połączenie z mostem. Sprawdzę zapisany wynik, bez ponawiania wysyłki.') }
-  let data
-  try { data = await response.json() } catch { throw new Error('Nie rozpoznałam odpowiedzi mostu. Nie traktuję jej jako potwierdzenia zlecenia.') }
-  if (!response.ok) throw new Error(data?.detail?.hint || 'Nie mogę potwierdzić odpowiedzi mostu. Sprawdźmy stan zlecenia przed dalszą pracą.')
+  }) } catch (error) {
+    if (error instanceof Error && error.message.trim()) {
+      if (error.name === 'TypeError') throw new Error(`Transport mostu MT5: ${error.message}`)
+      throw error
+    }
+    throw new Error('Transport mostu MT5 przerwał się bez szczegółu. Sprawdźmy zapisany wynik, bez ponawiania wysyłki.')
+  }
+  let data: unknown
+  try {
+    const raw = await response.text()
+    data = raw ? JSON.parse(raw) : null
+  } catch {
+    if (!response.ok) throw new Error(`Backend HTTP ${response.status}: odpowiedź nie zawiera poprawnego JSON.`)
+    throw new Error('Odpowiedź mostu nie zawiera poprawnego JSON. Nie traktuję jej jako potwierdzenia zlecenia.')
+  }
+  if (!response.ok) throw new Error(executionBackendError(data, response.status))
+  if (!isObject(data)) throw new Error('Odpowiedź mostu jest niekompletna. Nie potwierdzam wysyłki; sprawdźmy dziennik MT5.')
   const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
-  const accountValid = data?.account && finite(data.account.login) && typeof data.account.server === 'string' && typeof data.account.terminal === 'string'
+  const account = data.account
+  const request = data.request
+  const risk = data.risk
+  const accountValid = isObject(account) && finite(account.login) && typeof account.server === 'string' && typeof account.terminal === 'string'
   const valid = path.endsWith('/status')
-    ? data?.mode === 'DEMO_ONLY' && typeof data.enabled === 'boolean' && accountValid && Array.isArray(data.unresolved) && data.unresolved.every((item: { clientRequestId?: unknown }) => typeof item.clientRequestId === 'string')
+    ? data.mode === 'DEMO_ONLY' && typeof data.enabled === 'boolean' && accountValid && Array.isArray(data.unresolved) && data.unresolved.every(item => isObject(item) && typeof item.clientRequestId === 'string')
     : accountValid && typeof data.clientRequestId === 'string' && typeof data.confirmationToken === 'string' && finite(data.expiresAt)
-      && ['PREPARED', 'INTENT', 'SUBMITTING', 'ACKNOWLEDGED', 'UNKNOWN', 'REJECTED', 'RECONCILED'].includes(data.state)
-      && ['market', 'buy_limit', 'sell_limit', 'pending'].includes(data.kind) && typeof data.message === 'string' && typeof data.request?.symbol === 'string'
-      && ['volume', 'type', 'price', 'sl', 'tp', 'deviation'].every(field => finite(data.request?.[field]))
-      && ['loss', 'riskPercent', 'margin'].every(field => finite(data.risk?.[field])) && typeof data.risk?.currency === 'string'
+      && typeof data.state === 'string' && ['PREPARED', 'INTENT', 'SUBMITTING', 'ACKNOWLEDGED', 'UNKNOWN', 'REJECTED', 'RECONCILED'].includes(data.state)
+      && typeof data.kind === 'string' && ['market', 'buy_limit', 'sell_limit', 'pending'].includes(data.kind) && typeof data.message === 'string' && isObject(request) && typeof request.symbol === 'string'
+      && ['volume', 'type', 'price', 'sl', 'tp', 'deviation'].every(field => finite(request[field]))
+      && isObject(risk) && ['loss', 'riskPercent', 'margin'].every(field => finite(risk[field])) && typeof risk.currency === 'string'
   if (!valid) throw new Error('Odpowiedź mostu jest niekompletna. Nie potwierdzam wysyłki; sprawdźmy dziennik MT5.')
   return data as T
 }

@@ -43,6 +43,25 @@ def number(value: Any) -> float:
     return float(value)
 
 
+def backend_exception_message(error: Exception) -> str:
+    """Expose a bounded local MT5 diagnostic without returning a traceback."""
+    detail = " ".join(str(error).split())[:400]
+    label = type(error).__name__
+    return f"{label}: {detail}" if detail else label
+
+
+def backend_http_error_message(detail: Any) -> str:
+    """Retain the backend error code when a preflight rejection enters the journal."""
+    if isinstance(detail, dict):
+        code = str(detail.get("error", "")).strip()
+        hint = str(detail.get("hint", "")).strip()
+        if code and hint:
+            return f"{code}: {hint}"
+        if code or hint:
+            return code or hint
+    return " ".join(str(detail).split())[:400]
+
+
 class ExecutionService:
     def __init__(self, ensure_connected: Callable[[], None], market_trade_open: Callable[[str], bool | None] | None = None):
         self.ensure_connected = ensure_connected
@@ -330,13 +349,13 @@ class ExecutionService:
             self.guard(request, identity, quote_check=True)
             # This exact normalized dictionary is used for both broker calls.
         except HTTPException as error:
-            record.update(state="REJECTED", message=error.detail.get("hint", str(error.detail)))
+            record.update(state="REJECTED", message=backend_http_error_message(error.detail))
             with self.journal() as db:
                 self.save(db, record)
             return self.public(record)
-        except Exception:
+        except Exception as error:
             # No order_send call has occurred on this path.
-            record.update(state="REJECTED", message="Nie mogłam ukończyć kontroli danych MT5. Nie wysłałam zlecenia.")
+            record.update(state="REJECTED", message=f"Kontrola MT5 nie powiodła się ({backend_exception_message(error)}). Nie wysłałam zlecenia.")
             with self.journal() as db:
                 self.save(db, record)
             return self.public(record)
@@ -353,8 +372,8 @@ class ExecutionService:
                 uncertain = result.retcode not in DEFINITE_REJECTIONS or result.order > 0 or result.deal > 0
                 record["state"] = "ACKNOWLEDGED" if accepted else "UNKNOWN" if uncertain else "REJECTED"
                 record["message"] = ("Broker przyjął żądanie. Uzgadniam jego wynik." if accepted else "Wynik jest niejednoznaczny. Nie wyślę tego zlecenia ponownie." if uncertain else f"Broker odrzucił zlecenie: {result.retcode} · {result.comment}")
-        except Exception:
-            record.update(state="UNKNOWN", message="Połączenie przerwało się podczas wysyłki. Sprawdzę wynik bez ponownego zlecenia.")
+        except Exception as error:
+            record.update(state="UNKNOWN", message=f"Wysyłka MT5 zwróciła błąd ({backend_exception_message(error)}). Wynik jest niepewny; sprawdzę dziennik bez ponowienia zlecenia.")
         with self.journal() as db:
             self.save(db, record)
         if record["state"] in UNRESOLVED:
