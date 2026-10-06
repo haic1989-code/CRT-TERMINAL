@@ -39,13 +39,15 @@ jobs:
         run: npm run build
 
       - name: Install replay array dependency
-        run: python3 -m pip install numpy==2.5.3
+        run: |
+          python3 -m venv .smartflow-runtime/ci-python
+          .smartflow-runtime/ci-python/bin/python -m pip install numpy==2.5.3
 
       - name: Test MT5 bridge logic
-        run: python3 -m unittest discover -s mt5-bridge/tests
+        run: .smartflow-runtime/ci-python/bin/python -m unittest discover -s mt5-bridge/tests
 
       - name: Check MT5 bridge syntax
-        run: python3 -m py_compile mt5-bridge/bridge.py
+        run: .smartflow-runtime/ci-python/bin/python -m py_compile mt5-bridge/bridge.py mt5-bridge/replay_import_worker.py mt5-bridge/replay_ticks.py mt5-bridge/replay_store.py mt5-bridge/replay_worker.py
 
       - name: Install Chromium for visual tests
         run: npx playwright install --with-deps chromium
