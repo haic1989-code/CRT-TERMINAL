@@ -1,10 +1,11 @@
+import { invoke, isTauri } from '@tauri-apps/api/core'
+
 export const BRIDGE_PROTOCOL_VERSION = 5
 export const BRIDGE_ID = 'CRT_TERMINAL_MT5'
 type Endpoint = { url: string; instance: string; owner: string; protocol_version: number; execution_token?: string }
 let endpoint: Endpoint | undefined
 
 export async function resolveBridgeEndpoint(): Promise<Endpoint> {
-  const { isTauri, invoke } = await import('@tauri-apps/api/core')
   if (!isTauri()) {
     return { url: (import.meta.env.VITE_MT5_BRIDGE_URL as string | undefined)?.replace(/\/$/, '') || 'http://127.0.0.1:8765', instance: '', owner: 'manual', protocol_version: BRIDGE_PROTOCOL_VERSION }
   }

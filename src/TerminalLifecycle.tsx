@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { isTauri } from '@tauri-apps/api/core'
 import { stopMt5Bridge } from './bridgeShutdown'
 import './shutdown-terminal.css'
 
@@ -14,7 +15,7 @@ export function TerminalLifecycle({children}:{children:ReactNode}) {
     const close=()=>setClosing(true)
     window.addEventListener('smartflow-x:shutdown',close)
     let unlisten:(()=>void)|undefined
-    void import('@tauri-apps/api/core').then(async({isTauri})=>{
+    void (async()=>{
       if(!isTauri())return
       setDesktopApp(true)
       const {getCurrentWindow}=await import('@tauri-apps/api/window')
@@ -22,7 +23,7 @@ export function TerminalLifecycle({children}:{children:ReactNode}) {
         event.preventDefault()
         window.dispatchEvent(new Event('smartflow-x:shutdown'))
       })
-    }).catch(()=>{/* Browser previews do not expose the native window API. */})
+    })().catch(()=>{/* Browser previews do not expose the native window API. */})
     return()=>{window.removeEventListener('smartflow-x:shutdown',close);unlisten?.()}
   },[])
   useEffect(()=>{
@@ -32,10 +33,9 @@ export function TerminalLifecycle({children}:{children:ReactNode}) {
     try { sessionStorage.removeItem('smartflow-x:startup-ready:v1') } catch { /* local closing still works */ }
     const timers=[300,650,1000,1350].map((delay,index)=>window.setTimeout(()=>setPhase(index+1),delay))
     const start=window.setTimeout(()=>{
-      import('@tauri-apps/api/core').then(({isTauri})=>stopMt5Bridge({allowUnavailable:isTauri()})).then(async()=>{
+      stopMt5Bridge({allowUnavailable:isTauri()}).then(async()=>{
         if(dead)return
         setResult('done')
-        const {isTauri}=await import('@tauri-apps/api/core')
         if(isTauri()){
           setDesktopApp(true)
           window.setTimeout(()=>void import('@tauri-apps/api/window').then(({getCurrentWindow})=>getCurrentWindow().destroy()),1200)

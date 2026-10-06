@@ -4,6 +4,7 @@ import './startup-gate.css'
 
 import { loadBootModules } from './bootModules'
 import { checkTerminalUpdate, installTerminalUpdate } from './terminalUpdates'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import type { Update } from '@tauri-apps/plugin-updater'
 const WARP_DURATION_MS = 7000
 const loadWarp = () => import('./MatrixWarp')
@@ -28,7 +29,6 @@ const RAIN_COLUMNS = Array.from({ length: 30 }, (_, index) => ({
 
 async function readBridgeStartupMessage(): Promise<string> {
   try {
-    const { invoke, isTauri } = await import('@tauri-apps/api/core')
     if (!isTauri()) return ''
     const raw = await invoke<string | null>('read_bridge_startup_status')
     if (!raw) return ''
@@ -68,7 +68,6 @@ export function StartupGate({ children }: { children: ReactNode }) {
     let timer = 0
     const chartLoaded = () => { if (!dead) setChartReady(true) }
     window.addEventListener('crt:chart-ready', chartLoaded)
-    void loadWarp().catch(() => {})
     void loadBootModules(text => { if (!dead) report(text) }).then(() => {
       if (!dead) setModulesReady(true)
     }).catch(error => { if (!dead) { setFatal(String(error)); report('Nie wczytałam modułu terminalu. Uruchom mnie ponownie.', true) } })
@@ -127,6 +126,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }) }, [cursor])
   const ready = modulesReady && updatesChecked && !update && !fatal && !installFailed && !installing
     && (offlineMode || (bridgeReady && chartReady && dataChecksFinished))
+  useEffect(() => {
+    if (!ready || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    void loadWarp().catch(() => {})
+  }, [ready])
   const continueOffline = useCallback(() => {
     if (!offlineOffer || !modulesReady || !updatesChecked || update || fatal || installing) return
     setOfflineMode(true)
