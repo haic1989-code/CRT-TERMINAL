@@ -80,184 +80,11 @@
 }
 
 /* Contextual planner section — not a permanent trading form. */
-.planner-mode-panel {
-  position: absolute;
-  z-index: 8;
-  top: 42px;
-  left: 18px;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 5px 6px 5px 9px;
-  border: 1px solid rgba(246, 220, 199, 0.16);
-  border-radius: 8px;
-  background: rgba(12, 9, 13, 0.78);
-  box-shadow:
-    0 8px 22px rgba(5, 4, 7, 0.18),
-    inset 0 1px 0 rgba(255, 244, 234, 0.035);
-  backdrop-filter: none;
-}
-
-.planner-mode-panel__label {
-  color: rgba(234, 209, 191, 0.60);
-  font: 8px/1 "Cascadia Code", Consolas, monospace;
-  letter-spacing: 0.09em;
-  white-space: nowrap;
-}
-
-.planner-mode-panel__switch {
-  display: inline-flex;
-  gap: 3px;
-}
-
-.planner-mode-button {
-  height: 23px;
-  min-width: 47px;
-  padding: 0 8px;
-  border: 1px solid rgba(246, 220, 199, 0.10);
-  border-radius: 5px;
-  background: rgba(255,255,255,0.018);
-  color: rgba(235, 214, 198, 0.52);
-  cursor: pointer;
-  font: 8px/1 "Cascadia Code", Consolas, monospace;
-  letter-spacing: 0.08em;
-}
-
-.planner-mode-button--long.is-active {
-  border-color: rgba(77, 214, 201, 0.42);
-  background: rgba(77, 214, 201, 0.10);
-  color: rgba(182, 244, 232, 0.96);
-  box-shadow: inset 0 -2px 0 rgba(77, 214, 201, 0.72);
-}
-
-.planner-mode-button--short.is-active {
-  border-color: rgba(232, 73, 128, 0.42);
-  background: rgba(232, 73, 128, 0.10);
-  color: rgba(255, 184, 207, 0.96);
-  box-shadow: inset 0 -2px 0 rgba(232, 73, 128, 0.76);
-}
 
 /* The planner is now a 2D drawing object: X=bars, Y=prices. */
-.position-planner__zone {
-  left: var(--planner-left-x);
-  width: var(--planner-width-x);
-  right: auto;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.position-planner__zone--reward {
-  top: var(--planner-reward-top);
-  height: var(--planner-reward-height);
-}
-
-.position-planner__zone--risk {
-  top: var(--planner-risk-top);
-  height: var(--planner-risk-height);
-}
-
-.position-planner__move-surface {
-  position: absolute;
-  z-index: 2;
-  left: var(--planner-left-x);
-  top: var(--planner-box-top);
-  width: var(--planner-width-x);
-  height: var(--planner-box-height);
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: move;
-  touch-action: none;
-}
-
-.position-planner__move-surface:hover {
-  box-shadow: inset 0 0 0 1px rgba(248, 229, 211, 0.10);
-}
-
-.position-planner.is-moving .position-planner__move-surface {
-  cursor: grabbing;
-  box-shadow: inset 0 0 0 1px rgba(255, 239, 224, 0.20);
-}
-
-.position-planner__level {
-  left: var(--planner-left-x);
-  width: var(--planner-width-x);
-  right: auto;
-  height: 18px;
-  pointer-events: none;
-  z-index: 3;
-}
-
-.position-planner__level--tp { top: var(--planner-tp-y); }
-.position-planner__level--entry { top: var(--planner-entry-y); }
-.position-planner__level--sl { top: var(--planner-sl-y); }
-
-.position-planner__line {
-  left: 0;
-  right: 140px;
-  pointer-events: none;
-}
-
-.position-planner__handle,
-.position-planner__chip {
-  pointer-events: auto;
-  touch-action: none;
-}
-
-.position-planner__handle {
-  appearance: none;
-  margin: 0;
-  padding: 0;
-  cursor: ns-resize;
-}
-
-.position-planner__chip {
-  appearance: none;
-  cursor: ns-resize;
-  text-align: left;
-}
-
-.position-planner__summary {
-  left: calc(var(--planner-left-x) + var(--planner-width-x));
-  right: auto;
-  top: calc(var(--planner-entry-y) + 22px);
-  transform: translateX(-100%);
-  cursor: move;
-  touch-action: none;
-}
-
-.position-planner.is-moving .position-planner__summary {
-  cursor: grabbing;
-}
 
 /* Reward is always green/teal and risk always red/magenta, for both LONG and SHORT.
    Only their vertical location changes when direction changes. */
-.position-planner--short .position-planner__direction {
-  color: rgba(255, 181, 205, 0.98);
-}
-
-.position-planner--short .position-planner__summary {
-  box-shadow:
-    0 11px 26px rgba(5, 4, 7, 0.25),
-    inset 3px 0 0 rgba(232, 95, 138, 0.78),
-    inset 0 1px 0 rgba(255, 244, 234, 0.045);
-}
-
-@media (max-width: 1280px) {
-  .planner-mode-panel {
-    top: 36px;
-    left: 14px;
-  }
-
-  .planner-mode-panel__label {
-    display: none;
-  }
-
-  .position-planner__line {
-    right: 124px;
-  }
-}
 /* CHECKPOINT 05C — PLANNER WORKFLOW + PREMIUM CONTROL PANEL */
 /* Placement mode belongs to the chart, not to a floating form. */
 .market-chart--placing,
@@ -437,44 +264,6 @@
   flex: 0 0 auto;
 }
 
-.planner-control-panel__metrics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-top: 9px;
-}
-
-.planner-control-panel__metrics > div {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid rgba(244, 218, 198, 0.09);
-  border-radius: 6px;
-  background: rgba(4, 4, 7, 0.16);
-}
-
-.planner-control-panel__metrics span {
-  color: rgba(222, 198, 180, 0.50);
-  font: 7px/1 "Cascadia Code", Consolas, monospace;
-  letter-spacing: 0.07em;
-}
-
-.planner-control-panel__metrics strong {
-  color: rgba(255, 242, 231, 0.92);
-  font: 8px/1 "Cascadia Code", Consolas, monospace;
-}
-
-.planner-control-panel__metrics .metric-profit {
-  color: rgba(151, 237, 209, 0.96);
-}
-
-.planner-control-panel__metrics .metric-risk {
-  color: rgba(255, 143, 176, 0.96);
-}
-
 .planner-control-panel__hint {
   margin-top: 9px;
   color: rgba(211, 186, 168, 0.47);
@@ -501,158 +290,16 @@
 }
 
 /* Retire the older mini direction panel. */
-.planner-mode-panel {
-  display: none !important;
-}
 
 /* Whole box movement is handled by chart-level hit geometry. Zones are visual only. */
-.position-planner {
-  pointer-events: none;
-}
-
-.position-planner__zone {
-  pointer-events: none !important;
-}
-
-.position-planner__move-surface {
-  display: none !important;
-}
-
-.position-planner__move-cue {
-  position: absolute;
-  z-index: 2;
-  left: calc(var(--planner-left-x) + 10px);
-  top: calc(var(--planner-box-top) + 8px);
-  color: rgba(255, 235, 218, 0.38);
-  font: 6.5px/1 "Cascadia Code", Consolas, monospace;
-  letter-spacing: 0.10em;
-  pointer-events: none;
-}
-
-.position-planner.is-moving .position-planner__move-cue {
-  color: rgba(255, 238, 222, 0.72);
-}
 
 /* TP / Entry / SL are semantic colored surfaces, with alpha driven by tuning. */
-.position-planner__chip {
-  min-width: 138px;
-  border-radius: 7px;
-  color: #fff;
-  box-shadow:
-    0 10px 24px rgba(2, 3, 5, 0.24),
-    inset 0 1px 0 rgba(255,255,255,0.06);
-}
-
-.position-planner__level--tp .position-planner__chip {
-  border: 1px solid rgba(104, 234, 198, 0.52);
-  background: rgba(20, 119, 94, var(--planner-frame-fill));
-  box-shadow:
-    0 10px 24px rgba(2, 3, 5, 0.24),
-    inset 3px 0 0 rgba(108, 238, 201, 0.92),
-    inset 0 1px 0 rgba(255,255,255,0.06);
-}
-
-.position-planner__level--entry .position-planner__chip {
-  border: 1px solid rgba(111, 190, 255, 0.54);
-  background: rgba(31, 103, 166, var(--planner-frame-fill));
-  box-shadow:
-    0 10px 24px rgba(2, 3, 5, 0.24),
-    inset 3px 0 0 rgba(119, 196, 255, 0.94),
-    inset 0 1px 0 rgba(255,255,255,0.06);
-}
-
-.position-planner__level--sl .position-planner__chip {
-  border: 1px solid rgba(255, 104, 151, 0.54);
-  background: rgba(142, 35, 70, var(--planner-frame-fill));
-  box-shadow:
-    0 10px 24px rgba(2, 3, 5, 0.24),
-    inset 3px 0 0 rgba(255, 105, 152, 0.94),
-    inset 0 1px 0 rgba(255,255,255,0.06);
-}
-
-.position-planner__level--tp .position-planner__chip-key {
-  color: rgba(190, 255, 233, 0.96);
-}
-
-.position-planner__level--entry .position-planner__chip-key {
-  color: rgba(201, 234, 255, 0.98);
-}
-
-.position-planner__level--sl .position-planner__chip-key {
-  color: rgba(255, 205, 220, 0.98);
-}
-
-.position-planner__chip strong {
-  color: rgba(255, 255, 255, 0.99);
-}
 
 /* Horizontal lines mirror label semantics. */
-.position-planner__level--tp .position-planner__line {
-  background: linear-gradient(90deg, rgba(68, 203, 167, 0.22), rgba(91, 229, 191, 0.94));
-  box-shadow: 0 0 8px rgba(68, 203, 167, 0.16);
-}
-
-.position-planner__level--entry .position-planner__line {
-  background: linear-gradient(90deg, rgba(91, 168, 229, 0.22), rgba(120, 199, 255, 0.96));
-  box-shadow: 0 0 9px rgba(91, 168, 229, 0.17);
-}
-
-.position-planner__level--sl .position-planner__line {
-  background: linear-gradient(90deg, rgba(218, 61, 107, 0.22), rgba(244, 91, 137, 0.94));
-  box-shadow: 0 0 8px rgba(218, 61, 107, 0.17);
-}
-
-.position-planner__level--tp .position-planner__handle {
-  border-color: rgba(97, 234, 196, 0.96);
-}
-
-.position-planner__level--entry .position-planner__handle {
-  border-color: rgba(119, 197, 255, 0.98);
-}
-
-.position-planner__level--sl .position-planner__handle {
-  border-color: rgba(255, 106, 152, 0.98);
-}
 
 /* Direction label is removed from the chart object; the panel owns LONG/SHORT state. */
-.position-planner__summary {
-  display: none !important;
-}
-
-.position-planner__rr {
-  position: absolute;
-  z-index: 4;
-  left: calc(var(--planner-left-x) + var(--planner-width-x) - 8px);
-  top: calc(var(--planner-entry-y) + 21px);
-  transform: translateX(-100%);
-  padding: 5px 7px;
-  border: 1px solid rgba(247, 219, 198, 0.15);
-  border-radius: 6px;
-  background: rgba(13, 9, 13, 0.72);
-  color: rgba(229, 205, 188, 0.60);
-  font: 7px/1 "Cascadia Code", Consolas, monospace;
-  letter-spacing: 0.06em;
-  pointer-events: none;
-}
-
-.position-planner__rr strong {
-  color: rgba(255, 239, 226, 0.92);
-}
 
 /* Strong visual feedback when the chart-level move hit area is active. */
-.position-planner.is-moving .position-planner__zone--reward {
-  filter: saturate(1.08) brightness(1.06);
-  box-shadow:
-    inset 0 0 0 1px rgba(78, 215, 180, 0.22),
-    0 0 18px rgba(78, 215, 180, 0.08);
-}
-
-.position-planner.is-moving .position-planner__zone--risk {
-  filter: saturate(1.08) brightness(1.06);
-  box-shadow:
-    inset 0 0 0 1px rgba(232, 73, 128, 0.22),
-    0 0 18px rgba(232, 73, 128, 0.08);
-}
 
 @media (max-width: 1280px) {
   .planner-control-panel {
@@ -661,59 +308,8 @@
     width: 246px;
     padding: 10px;
   }
-
-  .planner-control-panel__metrics {
-    gap: 5px;
-  }
-
-  .position-planner__chip {
-    min-width: 122px;
-  }
 }
 /* CHECKPOINT 06A — MT5 ACCOUNT DOCK */
-.dock-account {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  min-width: 0;
-}
-
-.dock-account__metric {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
-}
-
-.dock-account__metric--broker {
-  max-width: 260px;
-}
-
-.dock-value--broker {
-  max-width: 190px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dock-value--positive {
-  color: rgba(151, 237, 209, 0.96);
-}
-
-.dock-value--negative {
-  color: rgba(255, 143, 176, 0.96);
-}
-
-@media (max-width: 1280px) {
-  .dock-account {
-    gap: 10px;
-  }
-
-  .dock-account__metric--broker {
-    display: none;
-  }
-}
 
 
 /* CHECKPOINT 06B — Planner Operator Deck + MT5-inspired chart navigation */
