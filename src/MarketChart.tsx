@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import {
-  LineSeries,
   LineStyle,
   type CandlestickData,
   type IChartApi,
@@ -10,7 +9,8 @@ import {
 } from 'lightweight-charts'
 import { createMarketChart } from './chart/createMarketChart'
 import { fetchMt5Bars, type Mt5Account, type Mt5MarketSession, type Mt5SymbolInfo } from './mt5Client'
-import { vwapPresentation } from './indicators/vwapPresentation'
+import { useChartIndicators, type IndicatorSeriesEntry } from './hooks/useChartIndicators'
+import { getIndicatorBars } from './indicators/chartBars'
 import { drawingLogicalAtTime, drawingTimeAtLogical, fibonacciRetracementPrice } from './domain/drawingGeometry'
 import { PositionPlannerPrimitive, plannerLogicalToCoordinate, type PlannerPrimitiveHit } from './positionPlannerPrimitive'
 import type { AlertRule, BreakEvenMode, MarketProfile } from './domain/contracts'
@@ -26,9 +26,8 @@ import {
   type PlannerState,
   type PlannerVolumeConstraints,
 } from './domain/chartPlanner'
-import { indicatorDefinition } from './indicators/catalog'
 import type { IndicatorId, IndicatorSettings } from './indicators/catalog'
-import { calculateIndicatorSeries, mergeLatestBar, type IndicatorBar } from './indicators/calculations'
+import type { IndicatorBar } from './indicators/calculations'
 import type { VegaTradeProposal } from './engines/vegaContext'
 import { PlannerControlPanel } from './PlannerControlPanel'
 
@@ -41,7 +40,6 @@ export type ManagedPositionHighlight = { id: number; symbol: string; side: Plann
 export type ManagedOrderHighlight = { id: number; symbol: string; trigger: number }
 export type MarketFeedStatus = 'connecting' | 'history' | 'live' | 'closed' | 'stale' | 'error'
 export type MarketProfileView = { showTpo: boolean; showPoc: boolean; showValueArea: boolean; density: number; widthPct: number; position: 'left' | 'right' }
-const RSI_PANE_HEIGHT = 140
 
 export type MarketFeedState = {
   status: MarketFeedStatus
@@ -79,7 +77,6 @@ type ChartDrawingPoint = { time: UTCTimestamp; price: number }
 type ChartAnnotationKind = 'vertical' | 'horizontal' | 'trend' | 'ray' | 'rectangle' | 'channel' | 'measure' | 'fib' | 'text'
 type ChartAnnotation = { id: string; kind: ChartAnnotationKind; points: ChartDrawingPoint[]; label?: string }
 type ChartDrawingStore = Record<string, ChartAnnotation[]>
-type IndicatorSeriesEntry = { id: IndicatorId; key: 'main' | 'upper' | 'lower'; series: any }
 
 const DRAWINGS_STORAGE_KEY = 'smartflow-x:drawings:v1'
 const DRAWING_POINT_COUNTS: Record<ChartAnnotationKind, number> = { vertical: 1, horizontal: 1, trend: 2, ray: 2, rectangle: 2, channel: 3, measure: 2, fib: 2, text: 1 }
@@ -114,19 +111,6 @@ function readChartDrawingStore(): ChartDrawingStore {
 function writeChartDrawingStore(store: ChartDrawingStore) {
   if (typeof window === 'undefined') return
   try { window.localStorage.setItem(DRAWINGS_STORAGE_KEY, JSON.stringify(store)) } catch { /* drawings remain available for this session if storage is unavailable */ }
-}
-
-function getIndicatorBars(
-  data: readonly CandlestickData<UTCTimestamp>[],
-  latest: CandlestickData<UTCTimestamp> | null,
-  volumes: readonly { time: UTCTimestamp; value: number; color: string }[],
-): IndicatorBar[] {
-  const merged = mergeLatestBar(data, latest)
-  const volumeByTime = new Map(volumes.map((item) => [Number(item.time), item.value]))
-  return merged.map((bar) => ({
-    time: Number(bar.time), open: bar.open, high: bar.high, low: bar.low, close: bar.close,
-    tickVolume: volumeByTime.get(Number(bar.time)) ?? 0,
-  }))
 }
 
 function pricePrecision(info?: Mt5SymbolInfo): PricePrecision {
@@ -763,107 +747,18 @@ export function MarketChart({
 
 
 
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart || !data.length) return
-    indicatorSeriesRef.current.forEach((entry) => chart.removeSeries(entry.series))
-    indicatorSeriesRef.current = []
-    const addLine = (
-      id: IndicatorId,
-      key: 'main' | 'upper' | 'lower',
-      name: string,
-      values: Array<number | null>,
-      color: string,
-      style = LineStyle.Solid,
-      paneIndex = 0,
-      fixedRange?: { minValue: number; maxValue: number },
-    ) => {
-      const series = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 1,
-        lineStyle: style,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-        title: name,
-        ...(fixedRange ? { autoscaleInfoProvider: () => ({ priceRange: fixedRange }) } : {}),
-      }, paneIndex)
-      const points = bars.flatMap((bar, index) => values[index] == null ? [] : [{ time: bar.time as UTCTimestamp, value: values[index]! }])
-      series.setData(id === 'VWAP' ? vwapPresentation(points) : points)
-      indicatorSeriesRef.current.push({ id, key, series })
-      return series
-    }
-    const bars = getIndicatorBars(liveHistoryRef.current, null, volumeDataRef.current)
-    for (const id of indicators) {
-      const settings = indicatorSettings[id] ?? { visible: true }
-      if (settings.visible === false) continue
-      const definition = indicatorDefinition(id)
-      if (!definition) continue
-      const period = settings.period ?? definition.defaultPeriod ?? 14
-      const values = calculateIndicatorSeries(id, bars, period)
-      const paneIndex = id === 'RSI' ? chart.panes().length : 0
-      let rsiSeries: any = null
-      for (const item of values) {
-        const title = id === 'SMA 20' ? `SMA ${period}`
-          : id === 'EMA 50' ? `EMA ${period}`
-            : id === 'Bollinger Bands' ? `BB ${item.key} ${period}`
-              : id === 'RSI' ? `RSI (${period})` : 'VWAP · DAY UTC'
-        const color = id === 'SMA 20' ? '#ffe06b'
-          : id === 'EMA 50' ? '#5eabff'
-            : id === 'VWAP' ? '#b594ff'
-              : id === 'RSI' ? '#5ce8ff' : 'rgba(238, 125, 255, .8)'
-        const style = id === 'Bollinger Bands' ? LineStyle.Dashed : LineStyle.Solid
-        const created = addLine(id, item.key, title, item.values, color, style, paneIndex, id === 'RSI' ? { minValue: 0, maxValue: 100 } : undefined)
-        if (id === 'RSI') rsiSeries = created
-      }
-      if (id === 'RSI' && rsiSeries) {
-        rsiSeries.createPriceLine({ price: 70, color: 'rgba(255, 89, 178, .72)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '70' })
-        rsiSeries.createPriceLine({ price: 30, color: 'rgba(92, 232, 255, .72)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '30' })
-        chart.priceScale('right', paneIndex).applyOptions({ visible: true, autoScale: true, scaleMargins: { top: 0.04, bottom: 0.04 } })
-        chart.panes()[paneIndex]?.setHeight(RSI_PANE_HEIGHT)
-      }
-    }
-    const paneCount = Math.max(0, chart.panes().length - 1)
-    const visiblePaneScaleCount = chart.panes().slice(1).filter((_, index) => chart.priceScale('right', index + 1).options().visible).length
-    if (rootRef.current) {
-      rootRef.current.dataset.indicatorPaneCount = String(paneCount)
-      rootRef.current.dataset.indicatorPaneScaleCount = String(visiblePaneScaleCount)
-      rootRef.current.dataset.indicatorSeriesCount = String(indicatorSeriesRef.current.length)
-      rootRef.current.dataset.rsiPaneHeight = paneCount ? String(RSI_PANE_HEIGHT) : '0'
-    }
-    return () => {
-      const current = chartRef.current
-      if (current) indicatorSeriesRef.current.forEach((entry) => { try { current.removeSeries(entry.series) } catch { /* chart is already being disposed */ } })
-      indicatorSeriesRef.current = []
-      if (current && rootRef.current) {
-        const panes = current.panes()
-        rootRef.current.dataset.indicatorPaneCount = String(Math.max(0, panes.length - 1))
-        rootRef.current.dataset.indicatorPaneScaleCount = String(panes.slice(1).filter((_, index) => current.priceScale('right', index + 1).options().visible).length)
-        rootRef.current.dataset.indicatorSeriesCount = '0'
-      }
-    }
-  }, [indicators, indicatorSettings, data])
-
-  useEffect(() => {
-    if (!data.length || !lastBar || indicatorSeriesRef.current.length === 0) return
-    const bars = getIndicatorBars(liveHistoryRef.current, lastBar, volumeDataRef.current)
-    const calculatedById = new Map<IndicatorId, ReturnType<typeof calculateIndicatorSeries>>()
-    for (const entry of indicatorSeriesRef.current) {
-      let calculated = calculatedById.get(entry.id)
-      if (!calculated) {
-        const definition = indicatorDefinition(entry.id)
-        const period = indicatorSettings[entry.id]?.period ?? definition?.defaultPeriod ?? 14
-        calculated = calculateIndicatorSeries(entry.id, bars, period)
-        calculatedById.set(entry.id, calculated)
-      }
-      const values = calculated.find(item => item.key === entry.key)?.values ?? []
-      const points = bars.flatMap((bar, index) => {
-        const value = values[index]
-        return value != null && Number.isFinite(value) ? [{ time: bar.time as UTCTimestamp, value }] : []
-      })
-      entry.series.setData(entry.id === 'VWAP' ? vwapPresentation(points) : points)
-    }
-  }, [data, lastBar, indicators, indicatorSettings])
+  useChartIndicators({
+    chartRef,
+    rootRef,
+    seriesRef: indicatorSeriesRef,
+    historyRef: liveHistoryRef,
+    volumeDataRef,
+    data,
+    lastBar,
+    volumeData,
+    indicators,
+    indicatorSettings,
+  })
 
   useEffect(() => {
     if (!data.length) return
@@ -871,16 +766,6 @@ export function MarketChart({
     onBarsChange?.(bars)
     if (rootRef.current) rootRef.current.dataset.liveBarCount = String(bars.length)
   }, [data, lastBar, volumeData, onBarsChange])
-
-  useEffect(() => {
-    const entries = indicatorSeriesRef.current.filter((entry) => entry.id === 'VWAP')
-    if (!data.length || !entries.length) return
-    const bars = getIndicatorBars(liveHistoryRef.current, lastBar, volumeDataRef.current)
-    const values = calculateIndicatorSeries('VWAP', bars)[0].values
-    const points = bars.flatMap((bar, index) => values[index] === null ? [] : [{ time: bar.time as UTCTimestamp, value: values[index]! }])
-    entries.forEach((entry) => entry.series.setData(vwapPresentation(points)))
-  }, [volumeData])
-
 
   useEffect(() => {
     const series = candlesRef.current
