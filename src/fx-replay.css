@@ -1,4 +1,7 @@
 .fx-replay-scrim{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:clamp(12px,3vw,36px);background:rgba(0,5,12,.82);backdrop-filter:blur(8px)}
+.fx-replay-import input,.fx-replay-import select{box-sizing:border-box}
+.fx-replay-import select{width:100%;min-width:0;height:36px;padding:0 9px;border:1px solid rgba(58,201,135,.35);border-radius:2px;background:#03120c;color:#b7e4c3;font:11px Consolas,'Courier New',monospace;color-scheme:dark;outline:none}
+.fx-replay-import select:focus{border-color:#68e6a1}
 .fx-replay-window{width:min(880px,100%);max-height:min(90vh,920px);overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(67,195,235,.42);border-radius:12px;background:radial-gradient(ellipse at 12% 0%,rgba(42,126,177,.35),transparent 42%),linear-gradient(145deg,#091b2c,#06111d 65%,#071725);box-shadow:0 0 55px rgba(36,158,214,.2),inset 0 0 40px rgba(71,178,220,.055);color:#b9d9e8;font:12px/1.45 Consolas,'Courier New',monospace;position:relative}
 .fx-replay-window:after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.16;background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(131,211,242,.08) 4px)}
 .fx-replay-header{display:flex;align-items:flex-start;justify-content:space-between;padding:22px 26px 18px;border-bottom:1px solid rgba(77,174,211,.24);position:relative;z-index:1}

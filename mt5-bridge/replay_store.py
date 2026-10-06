@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import sqlite3
-import struct
 import threading
 import uuid
+
+import replay_ticks
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,10 +16,8 @@ from typing import Any, Iterable
 _db_path: Path | None = None
 _initialized = False
 _db_lock = threading.RLock()
-_TICK_HASH_RECORD = struct.Struct("<qdddqdq")
-_TICK_INSERT_BATCH_SIZE = 100_000
-_TICK_HASH_RECORDS_PER_BUFFER = 8192
-_archive_hashers: dict[str, tuple[Any, bytearray, int]] = {}
+_tick_writers: dict[str, replay_ticks.TickWriter] = {}
+_tick_write_lock = threading.RLock()
 
 
 def initialize(data_dir: str | Path) -> Path:
@@ -119,6 +117,25 @@ def initialize(data_dir: str | Path) -> Path:
         return _db_path
 
 
+def attach_database(path: str | Path) -> None:
+    """Attach a trusted worker to the initialized DB without crash recovery."""
+    global _db_path
+    candidate = Path(path).resolve()
+    if not candidate.is_file():
+        raise ValueError("Nie znaleziono bazy archiwów.")
+    _db_path = candidate
+
+
+def annotate_archive(archive_id: str, **fields: Any) -> None:
+    with _db_lock, _connection() as db:
+        row = db.execute("SELECT manifest_json FROM archives WHERE id=? AND status='importing'", (archive_id,)).fetchone()
+        if row is None:
+            raise ValueError("Nie znaleziono aktywnego importu.")
+        manifest = json.loads(row[0])
+        manifest.update(fields)
+        db.execute("UPDATE archives SET manifest_json=? WHERE id=?", (json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), archive_id))
+
+
 def database_path() -> Path:
     if _db_path is None:
         raise RuntimeError("Replay archive store is not initialized")
@@ -168,7 +185,9 @@ def create_archive(
     archive_id = str(uuid.uuid4())
     now = _now()
     manifest = {
-        "format_version": 1,
+        "format_version": 2,
+        "tick_storage": replay_ticks.FORMAT,
+        "mt5_range_boundary_policy": "enclosing_seconds_filter_ms_v1",
         "source": "MetaTrader5.copy_ticks_range",
         "completeness": "importing",
         "requested_symbol": requested_symbol,
@@ -188,112 +207,44 @@ def create_archive(
             "INSERT INTO archives(id,status,requested_symbol,symbol,broker,server,from_ms,to_ms,manifest_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (archive_id, "importing", requested_symbol, symbol, broker, server, from_ms, to_ms, json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), now, now),
         )
-    _archive_hashers[archive_id] = (hashlib.sha256(), bytearray(_TICK_HASH_RECORD.size * _TICK_HASH_RECORDS_PER_BUFFER), 0)
     return archive_id
 
 
 def append_ticks(archive_id: str, rows: Iterable[Any], expected_from_ms: int, expected_to_ms: int) -> tuple[int, int | None]:
-    """Validate and append one fetched range in bounded batches and one transaction."""
-    with _db_lock, _connection() as db:
-        state = db.execute("SELECT tick_count FROM archives WHERE id=? AND status='importing'", (archive_id,)).fetchone()
-        if state is None:
+    """Append a vectorized binary block; SQLite stores only its committed count."""
+    with _tick_write_lock:
+        archive = get_archive(archive_id)
+        writer = _tick_writers.get(archive_id)
+        if not archive or archive["status"] != "importing":
             raise ValueError("Archiwum nie jest już w stanie importu.")
-        sequence = int(state[0])
-        previous = db.execute(
-            "SELECT time_msc FROM ticks WHERE archive_id=? ORDER BY sequence DESC LIMIT 1",
-            (archive_id,),
-        ).fetchone()
-        previous_ms = int(previous[0]) if previous is not None else None
-        latest_ms = previous_ms
-        added = 0
-        hasher, hash_buffer, hash_offset = _archive_hashers.get(
-            archive_id,
-            (hashlib.sha256(), bytearray(_TICK_HASH_RECORD.size * _TICK_HASH_RECORDS_PER_BUFFER), 0),
-        )
-        batch: list[tuple[str, int, int, float, float, float, int, float, int]] = []
-        insert_sql = "INSERT INTO ticks(archive_id,sequence,time_msc,bid,ask,last,volume,volume_real,flags) VALUES(?,?,?,?,?,?,?,?,?)"
-
-        for row in rows:
-            time_msc = int(row["time_msc"])
-            if time_msc < expected_from_ms or time_msc > expected_to_ms:
-                continue
-            bid = float(row["bid"])
-            ask = float(row["ask"])
-            last = float(row["last"])
-            volume = int(row["volume"])
-            volume_real = float(row["volume_real"])
-            flags = int(row["flags"])
-            if time_msc <= 0 or (previous_ms is not None and time_msc < previous_ms):
-                raise ValueError("MT5 zwrócił ticki w nieprawidłowej kolejności czasu.")
-            if not all(math.isfinite(value) for value in (bid, ask, last, volume_real)):
-                raise ValueError("MT5 zwrócił nieprawidłową cenę lub wolumen ticka.")
-            if min(bid, ask, last, volume_real) < 0 or volume < 0 or (bid > 0 and ask > 0 and ask < bid):
-                raise ValueError("MT5 zwrócił nieprawidłowe wartości ticka.")
-            batch.append((archive_id, sequence + added, time_msc, bid, ask, last, volume, volume_real, flags))
-            _TICK_HASH_RECORD.pack_into(hash_buffer, hash_offset, time_msc, bid, ask, last, volume, volume_real, flags)
-            hash_offset += _TICK_HASH_RECORD.size
-            if hash_offset == len(hash_buffer):
-                hasher.update(hash_buffer)
-                hash_offset = 0
-            previous_ms = latest_ms = time_msc
-            added += 1
-            if len(batch) >= _TICK_INSERT_BATCH_SIZE:
-                db.executemany(insert_sql, batch)
-                batch.clear()
-
-        if batch:
-            db.executemany(insert_sql, batch)
-        if not added:
-            return 0, latest_ms
-
-        _archive_hashers[archive_id] = (hasher, hash_buffer, hash_offset)
-
-        total = sequence + added
-        db.execute("UPDATE archives SET tick_count=?,updated_at=? WHERE id=?", (total, _now(), archive_id))
-    return added, latest_ms
+        if writer is None:
+            if archive["tick_count"] or archive["manifest"].get("tick_storage") != replay_ticks.FORMAT:
+                raise ValueError("Nie można dopisać ticków do przerwanego importu.")
+            writer = _tick_writers[archive_id] = replay_ticks.TickWriter(_db_path, archive_id)
+        added, latest = writer.append(rows, expected_from_ms, expected_to_ms)
+        if added:
+            with _db_lock, _connection() as db:
+                db.execute("UPDATE archives SET tick_count=?,updated_at=? WHERE id=? AND status='importing'", (writer.count, _now(), archive_id))
+        return added, latest
 
 
 def finish_archive(archive_id: str) -> dict[str, Any]:
-    with _db_lock, _connection() as db:
-        archive = db.execute("SELECT * FROM archives WHERE id=? AND status='importing'", (archive_id,)).fetchone()
-        if archive is None:
-            raise ValueError("Nie znaleziono aktywnego importu.")
-        if int(archive["tick_count"]) == 0:
-            raise ValueError("MT5 nie zwrócił ticków w wybranym zakresie.")
-        hasher_state = _archive_hashers.pop(str(archive["id"]), None)
-        if hasher_state is None:
-            # Compatibility fallback for an archive created by an older running
-            # bridge instance or a caller that did not initialize the hasher.
-            digest = hashlib.sha256()
-            cursor = db.execute(
-                "SELECT time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence",
-                (archive["id"],),
-            )
-            hash_buffer = bytearray(_TICK_HASH_RECORD.size * _TICK_HASH_RECORDS_PER_BUFFER)
-            buffer_offset = 0
-            for row in cursor:
-                _TICK_HASH_RECORD.pack_into(hash_buffer, buffer_offset, *row)
-                buffer_offset += _TICK_HASH_RECORD.size
-                if buffer_offset == len(hash_buffer):
-                    digest.update(hash_buffer)
-                    buffer_offset = 0
-            if buffer_offset:
-                digest.update(memoryview(hash_buffer)[:buffer_offset])
-        else:
-            digest, hash_buffer, buffer_offset = hasher_state
-            if buffer_offset:
-                digest.update(memoryview(hash_buffer)[:buffer_offset])
-        manifest = json.loads(archive["manifest_json"])
-        manifest["completeness"] = "all_requested_ranges_returned"
-        manifest["tick_hash_encoding"] = "little-endian:<qdddqdq>"
-        manifest["tick_count"] = int(archive["tick_count"])
-        manifest["sha256"] = digest.hexdigest()
-        manifest["completed_at"] = _now()
-        db.execute(
-            "UPDATE archives SET status='complete',sha256=?,manifest_json=?,updated_at=?,error=NULL WHERE id=?",
-            (digest.hexdigest(), json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), _now(), archive_id),
-        )
-    return get_archive(archive_id) or {}
+    with _tick_write_lock:
+        writer = _tick_writers.get(archive_id)
+        if writer is not None:
+            archive = get_archive(archive_id)
+            if not archive or archive["status"] != "importing" or writer.count == 0:
+                raise ValueError("Nie znaleziono ticków aktywnego importu.")
+            if archive["tick_count"] != writer.count:
+                raise ValueError("Licznik ticków nie zgadza się z plikiem.")
+            digest = writer.finish()
+            manifest = archive["manifest"]
+            manifest.update(completeness="all_requested_ranges_returned", tick_hash_encoding="little-endian:<qdddqdq>", tick_count=writer.count, sha256=digest, completed_at=_now())
+            with _db_lock, _connection() as db:
+                db.execute("UPDATE archives SET status='complete',sha256=?,manifest_json=?,updated_at=?,error=NULL WHERE id=? AND status='importing'", (digest, json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), _now(), archive_id))
+            _tick_writers.pop(archive_id)
+            return get_archive(archive_id) or {}
+        raise ValueError("Nie znaleziono aktywnego zapisu ticków; przerwanego importu nie można finalizować.")
 
 
 def set_archive_state(archive_id: str, status: str, error: str | None = None) -> None:
@@ -309,7 +260,10 @@ def set_archive_state(archive_id: str, status: str, error: str | None = None) ->
             "UPDATE archives SET status=?,error=?,manifest_json=?,updated_at=? WHERE id=? AND status='importing'",
             (status, (error or "")[:1000] or None, json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), _now(), archive_id),
         )
-    _archive_hashers.pop(archive_id, None)
+    with _tick_write_lock:
+        writer = _tick_writers.pop(archive_id, None)
+        if writer:
+            writer.close()
 
 
 def _archive_payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -344,17 +298,21 @@ def list_archives() -> list[dict[str, Any]]:
 
 
 def get_archive_ticks(archive_id: str, offset: int, limit: int) -> dict[str, Any] | None:
-    with _db_lock, _connection() as db:
-        archive = db.execute("SELECT status,tick_count FROM archives WHERE id=?", (archive_id,)).fetchone()
-        if archive is None:
-            return None
-        if archive["status"] != "complete":
-            raise ValueError("Niekompletnego archiwum nie można użyć do replay.")
-        rows = db.execute(
-            "SELECT sequence,time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence LIMIT ? OFFSET ?",
-            (archive_id, limit, offset),
-        ).fetchall()
-    return {"offset": offset, "limit": limit, "total": int(archive["tick_count"]), "values": [dict(row) for row in rows]}
+    archive = get_archive(archive_id)
+    if archive is None:
+        return None
+    if archive["status"] != "complete":
+        raise ValueError("Niekompletnego archiwum nie można użyć do replay.")
+    offset, limit = max(0, int(offset)), max(0, int(limit))
+    if archive["manifest"].get("tick_storage") == replay_ticks.FORMAT:
+        rows = list(replay_ticks.iter_ticks(replay_ticks.tick_path(_db_path, archive_id), archive["tick_count"], offset, limit))
+    else:
+        with _connection() as db:
+            rows = [dict(row) for row in db.execute(
+                "SELECT sequence,time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? AND sequence>=? ORDER BY sequence LIMIT ?",
+                (archive_id, offset, limit),
+            )]
+    return {"offset": offset, "limit": limit, "total": archive["tick_count"], "values": rows}
 
 
 def save_strategy(name: str, source: str) -> dict[str, Any]:

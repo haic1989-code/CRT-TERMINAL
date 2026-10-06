@@ -38,6 +38,9 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+      - name: Install replay array dependency
+        run: python3 -m pip install numpy==2.5.3
+
       - name: Test MT5 bridge logic
         run: python3 -m unittest discover -s mt5-bridge/tests
 

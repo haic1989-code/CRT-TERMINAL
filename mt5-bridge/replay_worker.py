@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 API_VERSION = 2
+ENGINE_VERSION = "3.0"
 DEFAULT_INITIAL_BALANCE = 10_000.0
 DEFAULT_RISK_FRACTION = 0.005
 MAX_CLOSED_BARS = 10_000
@@ -74,6 +75,10 @@ class ReplayContext:
         if self.timeframe not in TIMEFRAMES_MS:
             raise ValueError("timeframe musi być jednym z: M1, M5, M15, M30, H1, H4, D1.")
         self.timeframe_ms = TIMEFRAMES_MS[self.timeframe]
+        self.indicator_model = str(params.get("indicator_model", "mt5"))
+        if self.indicator_model not in {"mt5", "legacy_v2"}:
+            raise ValueError("indicator_model: mt5 lub legacy_v2.")
+        self.bar_count = 0
         self.initial_balance = _positive(params.get("initial_balance", DEFAULT_INITIAL_BALANCE), "Kapitał początkowy")
         leverage_value = _positive(params.get("leverage", 100), "Dźwignia")
         if not leverage_value.is_integer():
@@ -163,7 +168,7 @@ class ReplayContext:
         for position in self.positions:
             price = self._position_exit_quote(position)
             if price <= 0:
-                continue
+                return None
             value = self._price_pnl(position["side"], position["entry_price"], price, position["volume"])
             if value is None:
                 return None
@@ -309,10 +314,12 @@ class ReplayContext:
             for value in values:
                 self._advance_ema(state, value, period)
             self._ema_state[key] = state
-        return state["value"]
+        return state["value"] if self.bar_count >= period else None
 
-    @staticmethod
-    def _advance_ema(state: dict[str, Any], value: float, period: int) -> None:
+    def _advance_ema(self, state: dict[str, Any], value: float, period: int) -> None:
+        if self.indicator_model == "mt5" and state["value"] is None:
+            state["value"] = value
+            return
         if state["value"] is not None:
             alpha = 2.0 / (period + 1.0)
             state["value"] = alpha * value + (1.0 - alpha) * state["value"]
@@ -334,12 +341,21 @@ class ReplayContext:
             self._atr_state[period] = state
         return state["value"]
 
-    @staticmethod
-    def _advance_atr(state: dict[str, Any], bar: dict[str, Any], period: int) -> None:
+    def _advance_atr(self, state: dict[str, Any], bar: dict[str, Any], period: int) -> None:
         previous_close = state["previous_close"]
         high, low, close = float(bar["high"]), float(bar["low"]), float(bar["close"])
         true_range = high - low if previous_close is None else max(high - low, abs(high - previous_close), abs(low - previous_close))
         state["previous_close"] = close
+        if self.indicator_model == "mt5":
+            if previous_close is None:
+                return
+            ranges = state.setdefault("ranges", deque())
+            state["total"] = state.get("total", 0.0) + true_range
+            ranges.append(true_range)
+            if len(ranges) > period:
+                state["total"] -= ranges.popleft()
+            state["value"] = state["total"] / period if len(ranges) == period else None
+            return
         if state["value"] is not None:
             state["value"] = ((period - 1) * state["value"] + true_range) / period
             return
@@ -353,6 +369,7 @@ class ReplayContext:
             return
         bar = self.current_bar
         self.bars.append(bar)
+        self.bar_count += 1
         for (period, source), state in self._sma_state.items():
             values = state["values"]
             if len(values) == period:
@@ -393,9 +410,9 @@ class ReplayContext:
         self._check_margin(side, volume, order_type)
         sl = _price(sl, self.spec, "Stop Loss") if sl is not None else None
         tp = _price(tp, self.spec, "Take Profit") if tp is not None else None
-        if side == "buy" and ((sl is not None and sl >= price) or (tp is not None and tp <= price)):
+        if order_type == "market" and side == "buy" and ((sl is not None and sl >= price) or (tp is not None and tp <= price)):
             raise ValueError("BUY wymaga SL poniżej i TP powyżej ceny wejścia.")
-        if side == "sell" and ((sl is not None and sl <= price) or (tp is not None and tp >= price)):
+        if order_type == "market" and side == "sell" and ((sl is not None and sl <= price) or (tp is not None and tp >= price)):
             raise ValueError("SELL wymaga SL powyżej i TP poniżej ceny wejścia.")
         position_id = self._id()
         estimated_risk = None
@@ -525,7 +542,7 @@ class ReplayContext:
             self.points_volume_sum += points * volume
             self.points_volume_count += volume
             result = net_pnl if net_pnl is not None else points * volume
-            self.net_points_volume += result
+            self.net_points_volume += points * volume
             if result > 0:
                 self.winning_exits += 1
             elif result < 0:
@@ -566,6 +583,8 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
     manifest = json.loads(archive["manifest_json"])
     random.seed(int(archive["sha256"][:16], 16))
     symbol_spec = manifest.get("symbol_info") or {}
+    if int(symbol_spec.get("chart_mode") or 0) != 0:
+        raise ValueError("Silnik obsługuje obecnie instrumenty OTC z wykresem Bid. Symbol giełdowy z wykresem Last wymaga osobnego modelu realizacji.")
     run_params = dict(params)
     run_params["account_currency"] = manifest.get("account_currency", "")
     run_params["margin_calibration"] = manifest.get("margin_calibration") or {}
@@ -581,10 +600,18 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
             module.on_start(context)
         except ReplayOrderRejected:
             pass
-    cursor = db.execute(
-        "SELECT sequence,time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence",
-        (archive_id,),
-    )
+    if manifest.get("tick_storage") == "crt-ticks-le-v1":
+        # -I -S isolates user strategies from installed packages. Load only this
+        # trusted sibling module explicitly; it uses the Python standard library.
+        spec = importlib.util.spec_from_file_location("crt_replay_ticks", Path(__file__).with_name("replay_ticks.py"))
+        tick_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tick_module)
+        cursor = tick_module.iter_ticks(tick_module.tick_path(database_path, archive_id), int(archive["tick_count"]), expected_sha256=archive["sha256"])
+    else:
+        cursor = db.execute(
+            "SELECT sequence,time_msc,bid,ask,last,volume,volume_real,flags FROM ticks WHERE archive_id=? ORDER BY sequence",
+            (archive_id,),
+        )
     processed = 0
     try:
         for row in cursor:
@@ -659,12 +686,20 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
 
     return {
         "api_version": API_VERSION,
+        "engine_version": ENGINE_VERSION,
+        "indicator_model": context.indicator_model,
         "archive_id": archive_id,
         "archive_sha256": archive["sha256"],
+        "tick_source": manifest.get("source"),
+        "legacy_boundary_risk": manifest.get("source") == "MetaTrader5.copy_ticks_range" and manifest.get("mt5_range_boundary_policy") != "enclosing_seconds_filter_ms_v1",
+        "account_position_model": "hedging simulation",
+        "broker_margin_mode_snapshot": account_snapshot.get("margin_mode"),
+        "native_mt5_parity": "not validated",
         "symbol": archive["symbol"],
         "strategy_sha256": hashlib.sha256(strategy_path.read_bytes()).hexdigest(),
         "params": {
             **params,
+            "indicator_model": context.indicator_model,
             "timeframe": context.timeframe,
             "initial_balance": context.initial_balance,
             "risk_fraction": context.risk_fraction,
@@ -675,7 +710,7 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
         },
         "timeframe": context.timeframe,
         "tick_count": processed,
-        "bar_count": len(context.bars),
+        "bar_count": context.bar_count,
         "event_count": context.event_count,
         "closed_exits": context.closed_positions,
         "winning_exits": context.winning_exits,
@@ -707,6 +742,7 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
             "Symulacja wykorzystuje wyłącznie zapisane ticki Bid/Ask; nie wysyła zleceń do MT5.",
             "BUY otwiera po Ask i zamyka po Bid; SELL otwiera po Bid i zamyka po Ask.",
             "Sygnały świecowe otrzymują wyłącznie świece zamknięte; niepełna świeca jest widoczna jako current_bar, a finalizuje się na końcu danych.",
+            "Silnik używa osobnych pozycji jak w hedgingu; nie odtwarza nettingu, sesji handlu, stop/freeze level ani opóźnienia egzekucji brokera.",
             "Świece są agregowane z ticków Bid w koszykach wyrównanych do UTC; nie są pobranymi z MT5 świecami serwerowymi, a dla D1 granica dnia może się różnić od brokera.",
             "Otwarta pozycja jest rozliczana po ostatnim dostępnym kursie wykonywalnym; niewypełnione zlecenia oczekujące są anulowane na końcu archiwum.",
             "Spread pochodzi z Bid/Ask archiwum; poślizg i prowizja są parametrami symulacji, a swap nie jest modelowany.",

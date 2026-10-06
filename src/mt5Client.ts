@@ -208,6 +208,8 @@ function validateResponse(path: string, payload: unknown): void {
   }
   if (endpoint.startsWith('/v1/replay/')) {
     if (endpoint === '/v1/replay/archives' && (!Array.isArray(payload.values) || typeof payload.database !== 'string')) return fail()
+    if (endpoint === '/v1/replay/inbox' && (typeof payload.folder !== 'string' || !Array.isArray(payload.values)
+      || !payload.values.every(value => object(value) && typeof value.name === 'string' && numbers(value, ['bytes']) && Number(value.bytes) >= 0))) return fail()
     if (endpoint.endsWith('/ticks')) {
       if (!numbers(payload, ['offset', 'limit', 'total']) || !Array.isArray(payload.values)) return fail()
       const validTick = (value: unknown) => object(value)
@@ -294,7 +296,7 @@ export type ReplayImportJob = {
   completed_through_ms: number
   tick_count: number
   progress: number
-  stage?: 'queued' | 'mt5_fetch' | 'sqlite_write' | 'sha256_finalize' | 'complete'
+  stage?: 'queued' | 'file_read' | 'mt5_fetch' | 'sqlite_write' | 'archive_write' | 'sha256_finalize' | 'complete'
   range_from_ms?: number | null
   range_to_ms?: number | null
   last_chunk_fetch_ms?: number | null
@@ -305,6 +307,7 @@ export type ReplayImportJob = {
   ticks_per_second?: number
   error: string | null
   archive: ReplayArchive | null
+  reused?: boolean
 }
 
 export type ReplayTick = Pick<Mt5Tick, 'time_msc' | 'bid' | 'ask' | 'last' | 'volume' | 'volume_real' | 'flags'> & { sequence: number }
@@ -318,14 +321,18 @@ export type ReplayRun = {
   progress_ticks: number; total_ticks: number; created_at: string; updated_at: string;
 }
 
-export function startReplayImport(request: { symbol: string; fromMs: number; toMs: number }, signal?: AbortSignal) {
+export function startReplayImport(request: { symbol: string; fromMs: number; toMs: number; fileName?: string; utcOffsetMinutes?: number }, signal?: AbortSignal) {
   return localRequest<ReplayImportJob>('/v1/replay/imports', {
     method: 'POST',
     cache: 'no-store',
     signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ symbol: request.symbol, from_ms: request.fromMs, to_ms: request.toMs }),
+    body: JSON.stringify({ symbol: request.symbol, from_ms: request.fromMs, to_ms: request.toMs, file_name: request.fileName, utc_offset_minutes: request.utcOffsetMinutes }),
   })
+}
+
+export function fetchReplayInbox(signal?: AbortSignal) {
+  return localFetch<{ folder: string; values: { name: string; bytes: number }[] }>('/v1/replay/inbox', signal)
 }
 
 export function fetchReplayImport(jobId: string, signal?: AbortSignal) {

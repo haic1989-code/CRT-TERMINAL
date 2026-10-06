@@ -537,6 +537,13 @@ def _authorize_runtime(request: Request) -> None:
 
 
 def _stop_replay_workers() -> None:
+    with _replay_jobs_lock:
+        for job in _replay_jobs.values():
+            if job.get("cancel"):
+                job["cancel"].set()
+            process = job.get("process")
+            if process and process.poll() is None:
+                process.terminate()
     with _replay_runs_lock:
         active_runs = list(_replay_runs.values())
         for run in active_runs:
@@ -797,6 +804,7 @@ def _replay_job_payload(job: dict[str, Any]) -> dict[str, Any]:
         "ticks_per_second": round(job["tick_count"] / max(0.1, time.monotonic() - job.get("started_monotonic", time.monotonic())), 1),
         "error": job["error"],
         "archive": replay_store.get_archive(job["archive_id"]),
+        "reused": job.get("reused", False),
     }
 
 
@@ -805,73 +813,79 @@ def _run_replay_import(job_id: str) -> None:
     with _replay_jobs_lock:
         job = _replay_jobs[job_id]
     archive_id = job["archive_id"]
-    cursor_ms = job["from_ms"]
+    process = None
+    failure = None
     try:
-        # MT5 calls dominate latency for long archives. Keep each NumPy response
-        # bounded, but allow a full day for sparse symbols to reduce IPC calls.
-        min_chunk_ms = 30 * 60 * 1000
-        max_chunk_ms = 24 * 60 * 60 * 1000
-        target_ticks_per_chunk = 500_000
-        chunk_ms = 60 * 60 * 1000
-        while cursor_ms <= job["to_ms"]:
+        request = {key: job.get(key) for key in ("archive_id", "terminal_path", "file_name", "utc_offset_minutes")}
+        request["database_path"] = str(replay_store.database_path())
+        process = subprocess.Popen(
+            [sys.executable, "-X", "utf8", "-I", str(Path(__file__).with_name("replay_import_worker.py"))],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        with _replay_jobs_lock:
+            job["process"] = process
             if job["cancel"].is_set() or _closing.is_set():
-                replay_store.set_archive_state(archive_id, "cancelled", "Import anulowany przed końcem zakresu.")
-                with _replay_jobs_lock:
-                    job.update(status="cancelled", error="Import anulowany.", progress=0)
-                return
-            chunk_to_ms = min(cursor_ms + chunk_ms - 1, job["to_ms"])
-            date_from = datetime.fromtimestamp(cursor_ms / 1000, timezone.utc)
-            date_to = datetime.fromtimestamp(chunk_to_ms / 1000, timezone.utc)
+                process.terminate()
+        process.stdin.write(json.dumps(request) + "\n")
+        process.stdin.close()
+        for line in process.stdout:
+            try:
+                update = json.loads(line)
+            except ValueError:
+                failure = line.strip()[-1000:]
+                continue
+            if update.get("error"):
+                failure = update["error"]
             with _replay_jobs_lock:
-                job.update(stage="mt5_fetch", range_from_ms=cursor_ms, range_to_ms=chunk_to_ms)
-            fetch_started = time.monotonic()
-            with _lock:
-                _ensure_connected()
-                rates = _required(
-                    mt5.copy_ticks_range(job["symbol"], date_from, date_to, mt5.COPY_TICKS_ALL),
-                    "REPLAY_TICKS_UNAVAILABLE",
-                )
-            fetch_duration_ms = int((time.monotonic() - fetch_started) * 1000)
+                for key in ("stage", "range_from_ms", "range_to_ms", "last_chunk_fetch_ms", "last_chunk_write_ms", "last_tick_ms", "completed_through_ms", "finalize_ms"):
+                    if key in update:
+                        job[key] = update[key]
+                if "added" in update:
+                    job["tick_count"] += update["added"]
+                    job["fetch_total_ms"] += update.get("last_chunk_fetch_ms", 0)
+                    job["write_total_ms"] += update.get("last_chunk_write_ms", 0)
+                    job["progress"] = max(0, min(99, int((job["completed_through_ms"]-job["from_ms"])*100/max(1,job["to_ms"]-job["from_ms"]))))
+                if update.get("stage") == "sha256_finalize":
+                    job.update(status="finalizing", progress=99)
+                if update.get("complete"):
+                    job.update(status="complete", stage="complete", progress=100, error=None)
+        exit_code = process.wait(timeout=5)
+        archive = replay_store.get_archive(archive_id)
+        if archive and archive["status"] == "complete":
             with _replay_jobs_lock:
-                job["last_chunk_fetch_ms"] = fetch_duration_ms
-                job["fetch_total_ms"] = job.get("fetch_total_ms", 0) + fetch_duration_ms
-                job["stage"] = "sqlite_write"
-            write_started = time.monotonic()
-            added, latest_ms = replay_store.append_ticks(archive_id, rates, cursor_ms, chunk_to_ms)
-            write_duration_ms = int((time.monotonic() - write_started) * 1000)
+                job.update(status="complete", stage="complete", progress=100, tick_count=archive["tick_count"], error=None)
+        elif job["cancel"].is_set() or _closing.is_set():
+            replay_store.set_archive_state(archive_id, "cancelled", "Import anulowany przed końcem zakresu.")
             with _replay_jobs_lock:
-                job["last_chunk_write_ms"] = write_duration_ms
-                job["write_total_ms"] = job.get("write_total_ms", 0) + write_duration_ms
-                job["tick_count"] += added
-                job["completed_through_ms"] = chunk_to_ms
-                span = max(1, job["to_ms"] - job["from_ms"])
-                job["progress"] = min(99, int((chunk_to_ms - job["from_ms"]) * 100 / span))
-                job["last_tick_ms"] = latest_ms or job.get("last_tick_ms")
-            if added == 0:
-                chunk_ms = max_chunk_ms
-            else:
-                scale = max(0.35, min(8.0, target_ticks_per_chunk / added))
-                chunk_ms = max(min_chunk_ms, min(max_chunk_ms, int(chunk_ms * scale)))
-            cursor_ms = chunk_to_ms + 1
-
-        with _replay_jobs_lock:
-            job.update(status="finalizing", stage="sha256_finalize", progress=99)
-        finalize_started = time.monotonic()
-        archive = replay_store.finish_archive(archive_id)
-        finalize_duration_ms = int((time.monotonic() - finalize_started) * 1000)
-        with _replay_jobs_lock:
-            job.update(status="complete", stage="complete", finalize_ms=finalize_duration_ms, progress=100, archive=archive, error=None)
+                job.update(status="cancelled", error="Import anulowany.")
+        else:
+            raise ValueError(failure or f"Importer zakończył się bez kompletnego archiwum (kod {exit_code}).")
     except Exception as error:
-        try:
-            replay_store.set_archive_state(archive_id, "failed", str(error))
-        except Exception:
-            pass
+        cancelled = job["cancel"].is_set() or _closing.is_set()
+        replay_store.set_archive_state(archive_id, "cancelled" if cancelled else "failed", str(error))
         with _replay_jobs_lock:
-            job.update(status="failed", error=str(error)[:1000], progress=0)
+            job.update(status="cancelled" if cancelled else "failed", error="Import anulowany." if cancelled else str(error)[:1000])
     finally:
+        if process:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            for stream in (process.stdin, process.stdout):
+                if stream:
+                    stream.close()
         with _replay_jobs_lock:
+            job.pop("process", None)
             if _active_replay_job == job_id:
                 _active_replay_job = None
+
+
+@app.get("/v1/replay/inbox")
+def replay_inbox():
+    folder = replay_store.database_path().parent / "inbox"
+    folder.mkdir(parents=True, exist_ok=True)
+    files = [{"name": path.name, "bytes": path.stat().st_size} for path in folder.iterdir() if path.is_file() and not path.is_symlink() and path.suffix.lower() in {".csv", ".tsv", ".txt"}]
+    return {"folder": str(folder), "values": sorted(files, key=lambda item: item["name"])}
 
 
 @app.post("/v1/replay/imports", status_code=202)
@@ -888,6 +902,15 @@ def replay_import_start(request: Request, body: dict[str, Any]):
     now_ms = int(time.time() * 1000)
     if from_ms <= 0 or to_ms <= from_ms or to_ms > now_ms + 60_000:
         raise HTTPException(status_code=400, detail={"error": "REPLAY_RANGE_INVALID", "hint": "Podaj poprawny zakres czasu UTC; data końcowa nie może być w przyszłości."})
+
+    file_name = body.get("file_name")
+    offset_minutes = body.get("utc_offset_minutes")
+    if file_name is not None:
+        folder = (replay_store.database_path().parent / "inbox").resolve()
+        if not isinstance(file_name, str) or Path(file_name).name != file_name or (folder / file_name).resolve().parent != folder or Path(file_name).suffix.lower() not in {".csv", ".tsv", ".txt"} or not (folder / file_name).is_file():
+            raise HTTPException(status_code=400, detail={"error": "REPLAY_FILE_INVALID"})
+        if isinstance(offset_minutes, bool) or not isinstance(offset_minutes, int) or abs(offset_minutes) > 840:
+            raise HTTPException(status_code=400, detail={"error": "REPLAY_FILE_TIMEZONE_REQUIRED"})
 
     job_id = str(uuid.uuid4())
     with _replay_jobs_lock:
@@ -943,6 +966,17 @@ def replay_import_start(request: Request, body: dict[str, Any]):
                     except Exception:
                         pass
 
+        # Reuse only the exact data source and requested range, never another
+        # broker's similarly named instrument. The original snapshot is preserved.
+        reused = next((item for item in replay_store.list_archives() if not file_name and item["status"] == "complete" and item["symbol"] == symbol and item["server"] == str(account.server) and item["broker"] == str(terminal.company) and item["from_ms"] == from_ms and item["to_ms"] == to_ms and item["manifest"].get("source") == "MetaTrader5.copy_ticks_range" and item["manifest"].get("mt5_range_boundary_policy") == "enclosing_seconds_filter_ms_v1" and item["manifest"].get("account_currency") == str(account.currency).upper() and all((item["manifest"].get("symbol_info") or {}).get(key) == symbol_info.get(key) for key in ("digits", "point", "trade_tick_size", "trade_contract_size", "currency_base", "currency_profit", "currency_margin", "trade_calc_mode", "chart_mode"))), None)
+        if reused:
+            replay_store.get_archive_ticks(reused["id"], 0, 1)  # Validate stored file/count before claiming cache ready.
+            job = {"id": job_id, "archive_id": reused["id"], "status": "complete", "symbol": symbol, "from_ms": from_ms, "to_ms": to_ms, "completed_through_ms": to_ms, "tick_count": reused["tick_count"], "progress": 100, "stage": "complete", "reused": True, "error": None, "cancel": threading.Event()}
+            with _replay_jobs_lock:
+                _replay_jobs[job_id] = job
+                _active_replay_job = None
+            return _replay_job_payload(job)
+
         archive_id = replay_store.create_archive(
             requested_symbol=requested_symbol.strip(),
             symbol=symbol,
@@ -955,9 +989,14 @@ def replay_import_start(request: Request, body: dict[str, Any]):
             account_snapshot=account_snapshot,
             margin_calibration=margin_calibration,
         )
+        if file_name:
+            replay_store.annotate_archive(archive_id, source="MT5 tick CSV export supplied by user", source_file=file_name, file_utc_offset_minutes=offset_minutes, csv_flags="exported if present, otherwise derived from field changes", symbol_assignment="user selected; CSV does not identify its broker", completeness="importing")
         job = {
             "id": job_id,
             "archive_id": archive_id,
+            "terminal_path": str(terminal.path),
+            "file_name": file_name,
+            "utc_offset_minutes": offset_minutes,
             "status": "importing",
             "symbol": symbol,
             "from_ms": from_ms,
@@ -1003,6 +1042,9 @@ def replay_import_cancel(request: Request, job_id: str):
             raise HTTPException(status_code=404, detail={"error": "REPLAY_IMPORT_NOT_FOUND"})
         if job["status"] == "importing":
             job["cancel"].set()
+            process = job.get("process")
+            if process and process.poll() is None:
+                process.terminate()
         return _replay_job_payload(job)
 
 

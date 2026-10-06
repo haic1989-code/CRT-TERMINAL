@@ -1,6 +1,6 @@
 # CRT Terminal — lokalny odtwarzacz i tester strategii
 
-**Stan:** etap 1 wdrożony; etap 2 ma API, lokalne archiwum SQLite i ekran importu; rzeczywisty odbiór ticków MT5 pozostaje do wykonania\
+**Stan 0.1.38:** wdrożone import MT5 / eksport CSV, archiwum binarne, lokalny symulator API v2 / silnik 3 i odtwarzacz w obu kierunkach. Zmierzono import rzeczywistego tygodnia XAUUSDs. Pełna zgodność z natywnym testerem MT5 i odbiór zainstalowanego wydania Windows pozostają niepotwierdzone. Szczegóły: [audyt 0.1.38](audits/FX_REPLAY_0.1.38.md).
 **Zakres V1:** jeden instrument, rzeczywiste ticki MT5, skrypty strategii w Pythonie, wyłącznie symulowane zlecenia.
 
 ## Postęp
@@ -34,7 +34,7 @@ Obecny start CRT wymaga gotowego mostu MT5 i świeżej historii wykresu. Przed u
 1. Użytkownik wybiera symbol, interwał wykresu oraz zakres dat.
 2. Most pobiera z MT5 ticki przez oficjalne `copy_ticks_range`, wraz z `time_msc`, Bid, Ask, Last, wolumenem i flagami, a także właściwości symbolu: cyfry, punkt, rozmiar ticka, kontrakt i krok wolumenu.
 3. Import zapisuje lokalny zbiór CRT z manifestem: broker/serwer, symbol brokera, okres, strefa czasu, metadane symbolu, liczba ticków i informacja o kompletności. Brak historii, błąd pobrania, nieuporządkowane rekordy lub niewiarygodne ceny przerywają import. Nie tworzymy ticków z OHLC i nie uzupełniamy luk danymi syntetycznymi.
-4. Po imporcie dane są przechowywane lokalnie w bazie SQLite `.crt-replay` i pozostają dostępne bez MT5. Osobne rekordy manifestu opisują źródło i specyfikację; rekord ticka zachowuje oryginalny czas w milisekundach i kolejność. Każdy test wskazuje konkretny zbiór i jego zakres.
+4. Po imporcie ticki są przechowywane w pliku binarnym `.crt-ticks`, a manifesty, strategie i dzienniki w SQLite `.crt-replay`. Starsze archiwa SQLite pozostają czytelne. Do odtwarzania i symulacji nie potrzeba aktywnego MT5. Osobne rekordy manifestu opisują źródło i specyfikację; rekord ticka zachowuje oryginalny czas w milisekundach i kolejność. Każdy test wskazuje konkretny zbiór i jego zakres.
 
 ## Skrypt strategii
 
@@ -44,7 +44,7 @@ Strategia jest plikiem Python opartym na jawnym API CRT, a nie dowolnym plikiem 
 - `on_tick(context, tick)` — wywołanie dla każdego ticka z archiwum;
 - `on_stop(context)` — podsumowanie stanu po ostatnim ticku.
 
-`context` udostępnia symbol i jego specyfikację, bieżące Bid/Ask, czas symulacji oraz zamknięte świece OHLC składane z rzeczywistych ticków w koszykach UTC. Niepełna świeca jest osobno dostępna jako `current_bar`; silnik nie tworzy pustych świec dla luk w danych. Świece D1 są więc UTC-aligned i mogą nie pokrywać się z granicą dnia serwerowego brokera. Historia wskaźników jest ograniczona do ostatnich 10 000 świec; obliczenia EMA, ATR i SMA są aktualizowane przy zamknięciu świecy. Dostępne operacje to `sma/ema(period, source)`, `atr(period)`, `round_price(price, direction)`, `risk_volume(stop_distance, risk_fraction=None)`, symulowane BUY/SELL i BUY LIMIT/SELL LIMIT, `modify_position`, `cancel_pending` oraz pełne i częściowe `close`. API v2 nie implementuje pełnego API MQL5. Kontrakt i wersja API trafiają do raportu.
+`context` udostępnia symbol i jego specyfikację, bieżące Bid/Ask, czas symulacji oraz zamknięte świece OHLC składane z rzeczywistych ticków w koszykach UTC. Niepełna świeca jest osobno dostępna jako `current_bar`; silnik nie tworzy pustych świec dla luk w danych. Świece D1 są więc UTC-aligned i mogą nie pokrywać się z granicą dnia serwerowego brokera. Bufor świec ma 10 000 rekordów; zarejestrowane EMA/ATR/SMA aktualizują swój stan przez cały przebieg. Rejestruj wskaźniki w `on_start`, aby inicjowały się od początku archiwum. EMA modelu `mt5` startuje od pierwszej ceny, ATR używa średniej kroczącej TR od drugiej świecy; `indicator_model: legacy_v2` zachowuje wcześniejsze wzory. Silnik 3 i model wskaźników trafiają do raportu; obliczenia EMA, ATR i SMA są aktualizowane przy zamknięciu świecy. Dostępne operacje to `sma/ema(period, source)`, `atr(period)`, `round_price(price, direction)`, `risk_volume(stop_distance, risk_fraction=None)`, symulowane BUY/SELL i BUY LIMIT/SELL LIMIT, `modify_position`, `cancel_pending` oraz pełne i częściowe `close`. API v2 nie implementuje pełnego API MQL5. Kontrakt i wersja API trafiają do raportu.
 
 Wolumen ryzyka wymaga waluty konta i wiarygodnego tick value loss w manifeście. Jeśli nie ma ich w archiwum albo wyliczony wolumen byłby mniejszy od minimum brokera, silnik odmawia wyliczenia zamiast zwiększać ryzyko. Stare strategie można wczytać z lokalnego archiwum do edytora i zapisać jako nową wersję v2; oryginał nie jest nadpisywany.
 
@@ -98,12 +98,12 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 ### Etap 4 — przycisk i widok FX Replay
 
 - [x] Dodać przycisk `FX REPLAY` do głównego paska CRT; ma być dostępny również w trybie offline.
-- [ ] Otwierać dedykowany widok z wyborem archiwum, skryptu Python i parametrów symulacji.
+- [x] Otwierać dedykowany widok z wyborem archiwum, skryptu Python i parametrów symulacji.
 - [x] Otwierać ekran CRT z listą archiwów i kompletnych skryptów Python, edytorem nowej strategii, parametrami i uruchomieniem symulacji.
 - [x] Zaprojektować tło w stylu CRT: ciemny granat, niebieska poświata monitora, delikatna siatka i subtelne linie ekranu.
 - [x] Dodać wykres archiwum z ticków, oś czasu, Start/Pauza, krok tick/bar, prędkość oraz przewijanie w przód i w tył w porcjach; odtwarzanie automatycznie przechodzi przez granice porcji.
 - [x] Rysować Entry/Exit na wykresie oraz pokazywać wynik w punktach, dziennik i podsumowanie transakcji.
-- [ ] Nie wyświetlać w tym widoku panelu egzekucji DEMO/live; wszystkie operacje są symulowane.
+- [x] Nie wyświetlać w tym widoku panelu egzekucji DEMO/live; wszystkie operacje są symulowane.
 - [ ] Kryterium ukończenia: można otworzyć lokalne archiwum, uruchomić strategię i płynnie obejrzeć zapisany przebieg w obu kierunkach.
 
 ### Etap 5 — wydajność i wydanie
@@ -124,3 +124,20 @@ Zakres V1 pozostaje tylko do odczytu względem MT5. Żaden element testera nie m
 ## Granice V1
 
 Najpierw kończymy pojedynczą ścieżkę dla jednego symbolu: start offline → import ticków → skrypt Python → symulowane transakcje → odtwarzanie → raport. Dopiero potem rozszerzamy tester o wiele symboli, optymalizację parametrów, portfel strategii i bardziej zaawansowane modele kosztów. Zakresy danych dzielimy jawnie; nigdy nie obcinamy historii po cichu.
+
+## Audyt i poprawki 0.1.38
+
+- [x] Zmierzyć zapis identycznych 200 000 ticków: mediana 1,781 s → 0,064 s; SHA-256 identyczne.
+- [x] Zmierzyć rzeczywisty import z cache MT5: 2 949 303 ticki / tydzień w 3,52 s.
+- [x] Usunąć pomijanie końcówek sekund na granicach porcji; stary tydzień pomijał 698 ticków. Dla dokładnej historii ponownie zaimportować starsze zakresy.
+- [x] Oddzielić pobieranie historii od blokady bieżącego mostu MT5.
+- [x] Obsłużyć eksport ticków z folderu `FXReplay/inbox` z jawnie podaną strefą czasu; odrzucać OHLC.
+- [x] Wczytywać strony starych archiwów po indeksie sekwencji, nowe pliki przez seek.
+- [x] Odtwarzać czas ticków w obie strony; globalny suwak, 1000× i prefetch.
+- [x] Usunąć ponowne przeliczanie całego fragmentu wykresu na każdej klatce i wgląd w przyszłe OHLC.
+- [x] Poprawić EMA, ATR, jednostki punktów, licznik świec i wypełnienie Limit przy luce przez SL.
+- [x] Sprawdzić frontend w przeglądarce QHD na kontrolowanych danych; import i worker offline na prawdziwych tickach.
+- [ ] Sprawdzić porównanie transakcja po transakcji z natywnym testerem MT5 na tym samym zbiorze i kosztach.
+- [ ] Wdrożyć reguły nettingu, stop-out, historyczne przewalutowania i koszty, sesje brokera oraz wyrównanie świec serwerowych.
+- [ ] Zmierzyć duże archiwum roczne i BTCUSD; pomiar tygodnia XAUUSDs nie zastępuje tych bramek.
+- [ ] Potwierdzić aktualizację i pełną ścieżkę w zainstalowanej aplikacji Windows.

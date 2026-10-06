@@ -1,11 +1,13 @@
-# CRT Terminal 0.1.37
+# CRT Terminal 0.1.38
 
-- FX Replay imports real ticks in adaptive MT5 ranges, targeting about 500,000 ticks per response and expanding empty ranges to one day to reduce Python/MT5 round trips.
-- Import progress reports MT5 fetch time, SQLite write time, finalization time, and observed ticks per second so slow broker history responses can be separated from local storage time.
-- Bulk archive writes use bounded SQLite cache with WAL/NORMAL synchronization, avoid an unused per-tick time index, and update SHA-256 during import instead of rescanning the complete archive afterward.
-- Existing FX Replay archives remain usable; these changes affect new imports and do not require re-downloading history already stored locally.
-- FX Replay archives the MT5 account balance, deposit currency, leverage, margin mode, symbol margin specification and broker-calculated BUY/SELL margin calibration at import time.
-- FX Replay now offers editable starting balance and leverage for real-tick simulations, initialized from the selected archive's MT5 account snapshot.
-- Simulated orders that exceed estimated free margin are recorded as `order_rejected`; the backtest continues and reports estimated peak margin, minimum free margin and rejected order count.
-- Margin is an estimate calibrated with MT5 `order_calc_margin` at the import quote. Historical conversion rates, changing broker margin rules, stop-out, swaps and broker commission schedules are not reconstructed.
-- Signed Windows installer and updater manifest are published by the GitHub Actions release workflow.
+- Real ticks are stored in packed binary blocks; metadata and events remain in SQLite. Existing archives remain readable.
+- Read-only MT5 history imports run in a separate process, avoiding the live bridge's Python lock. Exact same-source/range archives with corrected import boundaries are reused.
+- MT5 requests enclose the requested milliseconds in full seconds and filter locally. Older imports could omit subsecond ticks at chunk boundaries: reimport legacy archives for accurate tests.
+- FX Replay can read MT5 tick CSV/TSV exports from its displayed `FXReplay/inbox` folder. Explicit export timezone and symbol are required; bars/OHLC are rejected. MT5 supplies current symbol/account metadata at import; replay then works offline.
+- Measured on this Windows machine: median write of 200,000 identical real ticks improved from 1.781 s to 0.064 s, with identical canonical SHA-256. Full cached MT5 week: 2,949,303 ticks in 3.52 s. Broker downloads and other datasets may take longer.
+- Replay uses recorded timestamps, a whole-archive seek slider, speeds through 1000x, adjacent-window prefetch, and candle prefix indexing without future prices.
+- EMA/ATR use verified MetaQuotes formulas by default; `indicator_model: legacy_v2` preserves older calculations. Engine version 3.0 is recorded in new reports.
+- Fixed points/money unit mixing, total bar counts, missing exit quote valuation and Limit fills through gaps crossing SL.
+- Outcomes still use estimated historical money/margin and a hedging position model. Native MT5 tester parity, netting, stop-out, broker sessions, historical FX conversion and swaps are not implemented/validated. Exchange symbols with Last charts are rejected by this Bid/Ask OTC simulator.
+- No trading requests are sent by import/replay. DEMO execution guards and explicit update confirmation remain in place.
+- Signed Windows installer and updater manifest are produced by GitHub Actions. Source validation does not confirm installation/update acceptance.
