@@ -47,7 +47,7 @@ jobs:
         run: .smartflow-runtime/ci-python/bin/python -m unittest discover -s mt5-bridge/tests
 
       - name: Check MT5 bridge syntax
-        run: .smartflow-runtime/ci-python/bin/python -m py_compile mt5-bridge/bridge.py mt5-bridge/replay_import_worker.py mt5-bridge/replay_ticks.py mt5-bridge/replay_store.py mt5-bridge/replay_worker.py
+        run: .smartflow-runtime/ci-python/bin/python -m py_compile mt5-bridge/bridge.py mt5-bridge/replay_import_worker.py mt5-bridge/replay_ticks.py mt5-bridge/replay_store.py mt5-bridge/replay_worker.py mt5-bridge/replay_finance.py
 
       - name: Install Chromium for visual tests
         run: npx playwright install --with-deps chromium

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 API_VERSION = 2
-ENGINE_VERSION = "3.0"
+ENGINE_VERSION = "3.1"
 DEFAULT_INITIAL_BALANCE = 10_000.0
 DEFAULT_RISK_FRACTION = 0.005
 MAX_CLOSED_BARS = 10_000
@@ -26,6 +26,14 @@ TIMEFRAMES_MS = {
     "M1": 60_000, "M5": 300_000, "M15": 900_000, "M30": 1_800_000,
     "H1": 3_600_000, "H4": 14_400_000, "D1": 86_400_000,
 }
+
+# The worker runs with -I -S. Resolve only the trusted installed sibling, never a
+# strategy directory or an installed package with the same name.
+_finance_spec = importlib.util.spec_from_file_location("crt_replay_finance", Path(__file__).with_name("replay_finance.py"))
+if _finance_spec is None or _finance_spec.loader is None:
+    raise RuntimeError("Brakuje modułu rozliczeń FX Replay.")
+finance = importlib.util.module_from_spec(_finance_spec)
+_finance_spec.loader.exec_module(finance)
 
 
 class ReplayOrderRejected(ValueError):
@@ -95,7 +103,10 @@ class ReplayContext:
             raise ValueError("commission_per_lot_side musi być nieujemne.")
         if not math.isfinite(self.slippage_points) or self.slippage_points < 0:
             raise ValueError("slippage_points musi być nieujemne.")
-        self.account_currency = str(params.get("account_currency") or "")
+        self.account_currency = str(params.get("account_currency") or "").upper()
+        profile = params.get("broker_profile") or {}
+        self.broker_profile = profile if isinstance(profile, dict) else {}
+        self.strict_profile = bool(self.broker_profile)
         calibration = params.get("margin_calibration") or {}
         self.margin_calibration = calibration if isinstance(calibration, dict) else {}
         self.margin_reference_leverage = int(self.margin_calibration.get("reference_leverage") or 0)
@@ -106,7 +117,21 @@ class ReplayContext:
             and float(self.margin_calibration[f"{side}_per_lot"]) > 0
             for side in ("buy", "sell")
         )
-        self.money_pnl_available = bool(self.account_currency) and tick_size > 0 and value_profit > 0 and value_loss > 0
+        self.contract_pnl = finance.contract_pnl_available(spec, self.account_currency)
+        self.contract_size = finance.number(spec.get("trade_contract_size"))
+        # Legacy manifests without a profit currency retain their explicitly
+        # labelled import-time tick-value estimate. Known mismatched currencies
+        # cannot silently use today's conversion for a historical result.
+        self.legacy_tick_pnl = (not self.strict_profile and not spec.get("currency_profit")
+                                and bool(self.account_currency) and tick_size > 0 and value_profit > 0 and value_loss > 0)
+        self.money_pnl_available = self.contract_pnl or self.legacy_tick_pnl
+        self.pnl_model = "contract_profit_currency_v1" if self.contract_pnl else "legacy_tick_value_snapshot" if self.legacy_tick_pnl else "unavailable"
+        self.broker_margin = finance.BrokerMargin(spec, self.broker_profile, self.leverage, self.account_currency)
+        if self.strict_profile:
+            self.margin_model_available = self.broker_margin.available
+            if not self.money_pnl_available or not self.margin_model_available:
+                details = "; ".join(str(item) for item in self.broker_profile.get("errors", []))
+                raise ValueError("Profil brokera nie pozwala na rozliczenie tej symulacji. " + (details or "Brakuje obsługiwanego profilu margin/P/L."))
         self.now_ms = 0
         self.bid = 0.0
         self.ask = 0.0
@@ -149,13 +174,17 @@ class ReplayContext:
         print(json.dumps({"event": {"kind": kind, "time_msc": self.now_ms, "tick_sequence": self.tick.get("sequence"), **values}}, ensure_ascii=False, allow_nan=False, separators=(",", ":")), file=sys.__stdout__, flush=True)
 
     def _price_pnl(self, side: str, entry: float, exit_price: float, volume: float) -> float | None:
+        if not self.money_pnl_available:
+            return None
+        direction = 1 if side == "buy" else -1
+        price_delta = (exit_price - entry) * direction
+        if self.contract_pnl:
+            return price_delta * self.contract_size * volume
         tick_size = float(self.spec.get("trade_tick_size") or 0)
         value_profit = float(self.spec.get("trade_tick_value_profit") or self.spec.get("trade_tick_value") or 0)
         value_loss = float(self.spec.get("trade_tick_value_loss") or self.spec.get("trade_tick_value") or 0)
         if tick_size <= 0 or value_profit <= 0 or value_loss <= 0:
             return None
-        direction = 1 if side == "buy" else -1
-        price_delta = (exit_price - entry) * direction
         tick_value = value_profit if price_delta >= 0 else value_loss
         return price_delta / tick_size * tick_value * volume
 
@@ -205,19 +234,66 @@ class ReplayContext:
         value = float(self.margin_calibration[f"{side}_per_lot"])
         # MT5 leverage scales these two common calculation modes. Other modes
         # retain the broker-calibrated requirement and are reported as estimates.
-        if self.trade_calc_mode in (0, 5) and self.margin_reference_leverage > 0:
+        if self.trade_calc_mode in finance.LEVERAGED_MODES and self.margin_reference_leverage > 0:
             value *= self.margin_reference_leverage / self.leverage
         return value
 
     @property
     def margin_used_estimate(self) -> float | None:
+        if self.strict_profile:
+            return self.broker_margin.portfolio(self.positions, self.pending)
         if not self.margin_model_available:
             return None
         total = sum(float(position["volume"]) * (self._margin_per_lot(position["side"]) or 0) for position in self.positions)
         total += sum(float(order["volume"]) * (self._margin_per_lot(order["side"]) or 0) for order in self.pending)
         return total
 
-    def _check_margin(self, side: str, volume: float, order_type: str) -> None:
+    def _check_margin(self, side: str, volume: float, order_type: str, price: float, *, pending: bool = False) -> None:
+        if self.strict_profile:
+            directional_limit = finance.number(self.spec.get("volume_limit"))
+            directional_volume = sum(p["volume"] for p in self.positions + self.pending if p["side"] == side) + volume
+            if directional_limit > 0 and directional_volume > directional_limit + 1e-9:
+                self.rejected_orders += 1
+                reason = "Łączny wolumen kierunku przekracza SYMBOL_VOLUME_LIMIT brokera."
+                self._event("order_rejected", side=side, volume=volume, order_type=order_type, reason=reason)
+                raise ReplayOrderRejected(reason)
+            if self.bid <= 0 or self.ask <= 0:
+                raise ReplayOrderRejected("Brak pełnego Bid/Ask do kontroli kapitału.")
+            initial = finance.number(self.spec.get("margin_initial"))
+            maintenance = finance.number(self.spec.get("margin_maintenance")) or initial
+            # Different fixed initial/maintenance margins require a dedicated
+            # opposite-order pre-trade model, distinct from held hedge margin.
+            if initial > 0 and maintenance != initial and any(p["side"] != side for p in self.positions + self.pending):
+                self.rejected_orders += 1
+                reason = "Nieobsługiwane przeciwstawne zlecenie przy różnych fixed initial/maintenance margin."
+                self._event("order_rejected", side=side, volume=volume, order_type=order_type, reason=reason)
+                raise ReplayOrderRejected(reason)
+            positions, orders = list(self.positions), list(self.pending)
+            if pending:
+                orders.append({"side": side, "volume": volume, "price": price})
+            else:
+                positions.append({"side": side, "volume": volume, "entry_price": price})
+            projected = self.broker_margin.portfolio(positions, orders)
+            if projected is None:
+                raise ReplayOrderRejected("Nie mogę wyliczyć margin portfela z zapisanych reguł.")
+            if not pending and initial > 0 and initial != maintenance:
+                opening = self.broker_margin.one_lot(side, price)
+                holding = self.broker_margin.one_lot(side, price, maintenance=True)
+                projected += max(0.0, (opening or 0) - (holding or 0)) * volume
+            equity = self.equity_estimate
+            if equity is None:
+                raise ReplayOrderRejected("Nie mogę wyliczyć kapitału portfela w walucie konta.")
+            if not pending:
+                # Charge the spread/slippage loss and entry commission before
+                # accepting an order, not only on the next tick.
+                equity += self._price_pnl(side, price, self.bid if side == "buy" else self.ask, volume) or 0
+                equity -= self.commission_per_lot_side * volume
+            if equity <= 0 or projected > equity + 1e-9:
+                self.rejected_orders += 1
+                reason = "Margin portfela po zleceniu przekracza kapitał po kosztach wejścia."
+                self._event("order_rejected", side=side, volume=volume, order_type=order_type, required_margin=projected, equity_after_entry=equity, reason=reason)
+                raise ReplayOrderRejected(reason)
+            return
         per_lot = self._margin_per_lot(side)
         if per_lot is None:
             return
@@ -238,18 +314,17 @@ class ReplayContext:
         fraction = self.risk_fraction if risk_fraction is None else _positive(risk_fraction, "Ryzyko na transakcję")
         if fraction > 1:
             raise ValueError("Ryzyko na transakcję musi być ułamkiem od 0 do 1.")
-        tick_size = float(self.spec.get("trade_tick_size") or 0)
-        tick_value = float(self.spec.get("trade_tick_value_loss") or self.spec.get("trade_tick_value") or 0)
         point = float(self.spec.get("point") or 0)
-        if not self.account_currency or tick_size <= 0 or tick_value <= 0 or (self.slippage_points > 0 and point <= 0):
-            raise ValueError("Manifest nie zawiera waluty konta oraz wiarygodnej wartości ticka straty; nie wyliczę wolumenu ryzyka.")
+        if not self.money_pnl_available or (self.slippage_points > 0 and point <= 0):
+            raise ValueError("Brak wiarygodnego modelu P/L w walucie konta; nie wyliczę wolumenu ryzyka.")
         capital = self.equity_estimate
         if capital is None:
             raise ValueError("Nie mogę obliczyć bieżącego kapitału w walucie konta; wolumen ryzyka pozostaje zablokowany.")
         if capital <= 0:
             raise ValueError("Kapitał symulacji jest równy lub niższy od zera; nie otwieram kolejnej pozycji.")
         risk_amount = capital * fraction
-        loss_per_lot = ((distance + self.slippage_points * point) / tick_size * tick_value) + 2 * self.commission_per_lot_side
+        # All supported P/L models are linear in price distance and volume.
+        loss_per_lot = abs(self._price_pnl("buy", distance + self.slippage_points * point, 0, 1) or 0) + 2 * self.commission_per_lot_side
         raw_volume = risk_amount / loss_per_lot
         minimum = float(self.spec.get("volume_min") or 0)
         maximum = float(self.spec.get("volume_max") or 0)
@@ -407,22 +482,20 @@ class ReplayContext:
         self._close_bar()
 
     def _open(self, side: str, volume: float, price: float, sl: float | None, tp: float | None, order_type: str = "market") -> str:
-        self._check_margin(side, volume, order_type)
         sl = _price(sl, self.spec, "Stop Loss") if sl is not None else None
         tp = _price(tp, self.spec, "Take Profit") if tp is not None else None
         if order_type == "market" and side == "buy" and ((sl is not None and sl >= price) or (tp is not None and tp <= price)):
             raise ValueError("BUY wymaga SL poniżej i TP powyżej ceny wejścia.")
         if order_type == "market" and side == "sell" and ((sl is not None and sl <= price) or (tp is not None and tp >= price)):
             raise ValueError("SELL wymaga SL powyżej i TP poniżej ceny wejścia.")
+        self._check_margin(side, volume, order_type, price)
         position_id = self._id()
         estimated_risk = None
         if sl is not None:
             gross_stop = self._price_pnl(side, price, sl, volume)
             if gross_stop is not None:
-                tick_size = float(self.spec.get("trade_tick_size") or 0)
-                tick_loss = float(self.spec.get("trade_tick_value_loss") or self.spec.get("trade_tick_value") or 0)
                 point = float(self.spec.get("point") or 0)
-                exit_slippage = self.slippage_points * point / tick_size * tick_loss * volume if tick_size > 0 else 0.0
+                exit_slippage = abs(self._price_pnl("buy", self.slippage_points * point, 0, volume) or 0)
                 estimated_risk = abs(gross_stop) + exit_slippage + 2 * self.commission_per_lot_side * volume
         entry_commission = self.commission_per_lot_side * volume
         self.commission_paid += entry_commission
@@ -468,7 +541,7 @@ class ReplayContext:
             raise ValueError("SELL LIMIT musi być powyżej aktualnego Bid.")
         order_id = self._id()
         normalized_volume = _volume(volume, self.spec)
-        self._check_margin(side, normalized_volume, f"{side}_limit")
+        self._check_margin(side, normalized_volume, f"{side}_limit", limit_price, pending=True)
         self.pending.append({"id": order_id, "side": side, "volume": normalized_volume, "price": limit_price, "sl": sl, "tp": tp, "created_at_msc": self.now_ms})
         self._event("pending", order_id=order_id, side=side, volume=volume, price=limit_price, order_type=f"{side}_limit")
         return order_id
@@ -582,13 +655,20 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
         raise ValueError("Archiwum nie istnieje albo nie jest kompletne.")
     manifest = json.loads(archive["manifest_json"])
     random.seed(int(archive["sha256"][:16], 16))
-    symbol_spec = manifest.get("symbol_info") or {}
+    # Bind to the server-captured revision pinned when this run was created.
+    # Do not read the latest profile here: another import may refresh it while
+    # this job is waiting. The original tick manifest stays immutable.
+    recorded_run = db.execute("SELECT params_json FROM replay_runs WHERE id=? AND archive_id=?", (run_id, archive_id)).fetchone()
+    recorded_params = json.loads(recorded_run[0]) if recorded_run else {}
+    financial_snapshot = recorded_params.get("_financial_snapshot") or manifest
+    symbol_spec = financial_snapshot.get("symbol_info") or {}
     if int(symbol_spec.get("chart_mode") or 0) != 0:
         raise ValueError("Silnik obsługuje obecnie instrumenty OTC z wykresem Bid. Symbol giełdowy z wykresem Last wymaga osobnego modelu realizacji.")
     run_params = dict(params)
-    run_params["account_currency"] = manifest.get("account_currency", "")
-    run_params["margin_calibration"] = manifest.get("margin_calibration") or {}
-    account_snapshot = manifest.get("account_snapshot") or {}
+    run_params["account_currency"] = financial_snapshot.get("account_currency", "")
+    run_params["margin_calibration"] = financial_snapshot.get("margin_calibration") or {}
+    run_params["broker_profile"] = financial_snapshot.get("broker_profile") or {}
+    account_snapshot = financial_snapshot.get("account_snapshot") or {}
     if "initial_balance" not in run_params:
         run_params["initial_balance"] = account_snapshot.get("balance", DEFAULT_INITIAL_BALANCE)
     if "leverage" not in run_params:
@@ -695,6 +775,12 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
         "account_position_model": "hedging simulation",
         "broker_margin_mode_snapshot": account_snapshot.get("margin_mode"),
         "native_mt5_parity": "not validated",
+        "pnl_model": context.pnl_model,
+        "broker_profile": context.broker_profile or None,
+        "legacy_financial_profile": not context.strict_profile,
+        "financial_specification": symbol_spec,
+        "financial_snapshot_at_ms": account_snapshot.get("captured_at_ms"),
+        "financial_profile_sha256": hashlib.sha256(json.dumps({"symbol_info": symbol_spec, "account_snapshot": account_snapshot, "broker_profile": context.broker_profile}, sort_keys=True, ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest(),
         "symbol": archive["symbol"],
         "strategy_sha256": hashlib.sha256(strategy_path.read_bytes()).hexdigest(),
         "params": {
@@ -730,7 +816,7 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
         "max_drawdown_account_currency_estimate": context.max_drawdown_estimate if context.equity_estimate is not None else None,
         "commission_paid": context.commission_paid,
         "margin_model_available": context.margin_model_available,
-        "margin_model": "MT5 import-time single-order calibration; estimated static per-lot margin across historical ticks" if context.margin_model_available else "unavailable",
+        "margin_model": "frozen_broker_rates_hedging_v1" if context.strict_profile else "legacy_static_per_lot_estimate" if context.margin_model_available else "unavailable",
         "margin_calibration": context.margin_calibration if context.margin_model_available else None,
         "peak_margin_used_estimate": context.peak_margin_used_estimate if context.margin_model_available else None,
         "minimum_free_margin_estimate": context.min_free_margin_estimate if context.margin_model_available else None,
@@ -746,8 +832,9 @@ def run(database_path: Path, run_id: str, archive_id: str, strategy_path: Path, 
             "Świece są agregowane z ticków Bid w koszykach wyrównanych do UTC; nie są pobranymi z MT5 świecami serwerowymi, a dla D1 granica dnia może się różnić od brokera.",
             "Otwarta pozycja jest rozliczana po ostatnim dostępnym kursie wykonywalnym; niewypełnione zlecenia oczekujące są anulowane na końcu archiwum.",
             "Spread pochodzi z Bid/Ask archiwum; poślizg i prowizja są parametrami symulacji, a swap nie jest modelowany.",
-            "Margin jest szacowany na podstawie kalibracji MT5 order_calc_margin pobranej przy imporcie i parametrów symbolu; nie odwzorowuje historycznych zmian dźwigni, kursów przeliczeniowych ani progów stop-out. Dźwignia skaluje tylko tryby Forex i CFD z dźwignią.",
-            "Pieniężny wynik i wolumen ryzyka są szacowane z wartości ticka oraz waluty konta zapisanych przy imporcie; nie odtwarzają historycznych zmian przelicznika walutowego ani zmian specyfikacji symbolu.",
+            "Margin korzysta z migawki parametrów brokera; nie odwzorowuje historycznych zmian stawek/dźwigni ani progów stop-out. Dźwignia skaluje tylko tryby Forex (0) i CFD z dźwignią (4), nigdy Forex No Leverage (5). Starsze archiwa bez nowego profilu zachowują jawny szacunek stałego margin na lot.",
+            "P/L i ryzyko dla obsługiwanych kontraktów w walucie konta używają wielkości kontraktu i zmiany ceny. Starsze manifesty bez waluty zysku używają jawnego szacunku z wartości ticka. Brak historycznych zmian specyfikacji i przewalutowania.",
+            "Nowy profil wylicza margin z cen wejścia/limit, stawek BUY/SELL/BUY LIMIT/SELL LIMIT i reguły hedge. Stawki maintenance są oszacowane ze stawek initial; próby cen/wolumenów nie stanowią pełnej tabeli dynamicznych progów brokera.",
             "Wynik punktowy używa punktu brokera z manifestu.",
         ],
     }

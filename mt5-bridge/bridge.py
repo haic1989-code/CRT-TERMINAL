@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from execution import ExecutionService
 import replay_store
+import replay_finance
 
 HOST = "127.0.0.1"
 PORT = int(os.getenv("CRT_TERMINAL_MT5_PORT", os.getenv("SMARTFLOW_MT5_PORT", "8765")))
@@ -412,8 +413,19 @@ def _symbol_payload(symbol: str) -> dict[str, Any]:
         "margin_initial": float(getattr(info, "margin_initial", 0) or 0),
         "margin_maintenance": float(getattr(info, "margin_maintenance", 0) or 0),
         "margin_hedged": float(getattr(info, "margin_hedged", 0) or 0),
-        "margin_long": float(getattr(info, "margin_long", 0) or 0),
-        "margin_short": float(getattr(info, "margin_short", 0) or 0),
+        # Python symbol_info does not expose SymbolInfoMarginRate. These fields
+        # must not be invented as zero; replay captures read-only calibration.
+        "margin_hedged_use_leg": getattr(info, "margin_hedged_use_leg", None),
+        "volume_limit": float(getattr(info, "volume_limit", 0) or 0),
+        "trade_stops_level": int(getattr(info, "trade_stops_level", 0) or 0),
+        "trade_freeze_level": int(getattr(info, "trade_freeze_level", 0) or 0),
+        "trade_exemode": int(getattr(info, "trade_exemode", -1)),
+        "order_mode": int(getattr(info, "order_mode", 0) or 0),
+        "filling_mode": int(getattr(info, "filling_mode", 0) or 0),
+        "swap_mode": int(getattr(info, "swap_mode", -1)),
+        "swap_long": float(getattr(info, "swap_long", 0) or 0),
+        "swap_short": float(getattr(info, "swap_short", 0) or 0),
+        "swap_rollover3days": int(getattr(info, "swap_rollover3days", -1)),
         "visible": bool(info.visible),
         "chart_mode": int(info.chart_mode),
     }
@@ -966,11 +978,20 @@ def replay_import_start(request: Request, body: dict[str, Any]):
                     except Exception:
                         pass
 
+            broker_profile = replay_finance.capture_profile(
+                mt5, symbol, symbol_info, account_snapshot, tick,
+                str(terminal.company), str(account.server),
+            )
+
         # Reuse only the exact data source and requested range, never another
         # broker's similarly named instrument. The original snapshot is preserved.
         reused = next((item for item in replay_store.list_archives() if not file_name and item["status"] == "complete" and item["symbol"] == symbol and item["server"] == str(account.server) and item["broker"] == str(terminal.company) and item["from_ms"] == from_ms and item["to_ms"] == to_ms and item["manifest"].get("source") == "MetaTrader5.copy_ticks_range" and item["manifest"].get("mt5_range_boundary_policy") == "enclosing_seconds_filter_ms_v1" and item["manifest"].get("account_currency") == str(account.currency).upper() and all((item["manifest"].get("symbol_info") or {}).get(key) == symbol_info.get(key) for key in ("digits", "point", "trade_tick_size", "trade_contract_size", "currency_base", "currency_profit", "currency_margin", "trade_calc_mode", "chart_mode"))), None)
         if reused:
             replay_store.get_archive_ticks(reused["id"], 0, 1)  # Validate stored file/count before claiming cache ready.
+            replay_store.append_financial_profile(
+                reused["id"], symbol_info=symbol_info, account_snapshot=account_snapshot,
+                margin_calibration=margin_calibration, broker_profile=broker_profile,
+            )
             job = {"id": job_id, "archive_id": reused["id"], "status": "complete", "symbol": symbol, "from_ms": from_ms, "to_ms": to_ms, "completed_through_ms": to_ms, "tick_count": reused["tick_count"], "progress": 100, "stage": "complete", "reused": True, "error": None, "cancel": threading.Event()}
             with _replay_jobs_lock:
                 _replay_jobs[job_id] = job
@@ -988,6 +1009,7 @@ def replay_import_start(request: Request, body: dict[str, Any]):
             account_currency=str(getattr(account, "currency", "") or ""),
             account_snapshot=account_snapshot,
             margin_calibration=margin_calibration,
+            broker_profile=broker_profile,
         )
         if file_name:
             replay_store.annotate_archive(archive_id, source="MT5 tick CSV export supplied by user", source_file=file_name, file_utc_offset_minutes=offset_minutes, csv_flags="exported if present, otherwise derived from field changes", symbol_assignment="user selected; CSV does not identify its broker", completeness="importing")

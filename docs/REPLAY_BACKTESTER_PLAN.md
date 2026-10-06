@@ -1,6 +1,6 @@
 # CRT Terminal — lokalny odtwarzacz i tester strategii
 
-**Stan 0.1.38:** wdrożone import MT5 / eksport CSV, archiwum binarne, lokalny symulator API v2 / silnik 3 i odtwarzacz w obu kierunkach. Zmierzono import rzeczywistego tygodnia XAUUSDs. Pełna zgodność z natywnym testerem MT5 i odbiór zainstalowanego wydania Windows pozostają niepotwierdzone. Szczegóły: [audyt 0.1.38](audits/FX_REPLAY_0.1.38.md).
+**Stan 0.1.39:** zachowane import MT5 / eksport CSV, archiwum binarne i odtwarzacz w obu kierunkach. Silnik 3.1 dodaje rozliczenie obsługiwanych kontraktów w walucie konta i zamrożone profile brokerowego margin hedgingu; profil można odświeżyć bez ponownego pobierania tego samego kompletnego zakresu ticków. Pełna zgodność z natywnym testerem MT5 i odbiór Windows pozostają niepotwierdzone. Szczegóły: [audyt wydajności 0.1.38](audits/FX_REPLAY_0.1.38.md) i [rozliczenia — etap 1](implementation/FX_REPLAY_FINANCE_V1.md).
 **Zakres V1:** jeden instrument, rzeczywiste ticki MT5, skrypty strategii w Pythonie, wyłącznie symulowane zlecenia.
 
 ## Postęp

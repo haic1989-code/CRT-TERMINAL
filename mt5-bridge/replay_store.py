@@ -59,6 +59,14 @@ def initialize(data_dir: str | Path) -> Path:
                 );
                 CREATE INDEX IF NOT EXISTS idx_archives_status_created
                     ON archives(status, created_at DESC);
+                CREATE TABLE IF NOT EXISTS archive_financial_profiles (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    archive_id TEXT NOT NULL REFERENCES archives(id),
+                    snapshot_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_archive_financial_profiles
+                    ON archive_financial_profiles(archive_id, sequence);
                 CREATE TABLE IF NOT EXISTS strategies (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -181,6 +189,7 @@ def create_archive(
     account_currency: str = "",
     account_snapshot: dict[str, Any] | None = None,
     margin_calibration: dict[str, Any] | None = None,
+    broker_profile: dict[str, Any] | None = None,
 ) -> str:
     archive_id = str(uuid.uuid4())
     now = _now()
@@ -198,6 +207,7 @@ def create_archive(
         "account_currency": account_currency.upper(),
         "account_snapshot": account_snapshot or {},
         "margin_calibration": margin_calibration or {},
+        "broker_profile": broker_profile or {},
         "from_ms": from_ms,
         "to_ms": to_ms,
         "symbol_info": symbol_info,
@@ -288,13 +298,41 @@ def _archive_payload(row: sqlite3.Row) -> dict[str, Any]:
 def get_archive(archive_id: str) -> dict[str, Any] | None:
     with _db_lock, _connection() as db:
         row = db.execute("SELECT * FROM archives WHERE id=?", (archive_id,)).fetchone()
-    return _archive_payload(row) if row else None
+        profile = db.execute("SELECT snapshot_json FROM archive_financial_profiles WHERE archive_id=? ORDER BY sequence DESC LIMIT 1", (archive_id,)).fetchone()
+    if row is None:
+        return None
+    result = _archive_payload(row)
+    if profile:
+        result["manifest"]["financial_snapshot"] = json.loads(profile[0])
+    return result
 
 
 def list_archives() -> list[dict[str, Any]]:
     with _db_lock, _connection() as db:
         rows = db.execute("SELECT * FROM archives ORDER BY created_at DESC").fetchall()
-    return [_archive_payload(row) for row in rows]
+        profiles = {row["archive_id"]: json.loads(row["snapshot_json"]) for row in db.execute(
+            "SELECT archive_id,snapshot_json FROM archive_financial_profiles WHERE sequence IN (SELECT MAX(sequence) FROM archive_financial_profiles GROUP BY archive_id)"
+        )}
+    values = [_archive_payload(row) for row in rows]
+    for value in values:
+        if value["id"] in profiles:
+            value["manifest"]["financial_snapshot"] = profiles[value["id"]]
+    return values
+
+
+def append_financial_profile(archive_id: str, *, symbol_info: dict[str, Any], account_snapshot: dict[str, Any],
+                             margin_calibration: dict[str, Any], broker_profile: dict[str, Any]) -> None:
+    """Append a new immutable metadata revision without touching tick history.
+
+    A run pins the selected revision at creation. Later metadata refreshes must
+    not alter either an earlier run or the archive's original import manifest.
+    """
+    snapshot = {"symbol_info": symbol_info, "account_snapshot": account_snapshot,
+                "account_currency": account_snapshot.get("currency", ""),
+                "margin_calibration": margin_calibration, "broker_profile": broker_profile}
+    with _db_lock, _connection() as db:
+        db.execute("INSERT INTO archive_financial_profiles(archive_id,snapshot_json,created_at) VALUES(?,?,?)",
+                   (archive_id, json.dumps(snapshot, ensure_ascii=False, allow_nan=False), _now()))
 
 
 def get_archive_ticks(archive_id: str, offset: int, limit: int) -> dict[str, Any] | None:
@@ -356,9 +394,16 @@ def list_strategies() -> list[dict[str, Any]]:
 def create_run(run_id: str, archive_id: str, strategy_id: str, params: dict[str, Any]) -> None:
     now = _now()
     with _db_lock, _connection() as db:
+        normalized = dict(params)
+        # Never accept a user-script supplied broker profile. Only a snapshot
+        # captured by the bridge may bind the financial model to a run.
+        normalized.pop("_financial_snapshot", None)
+        profile = db.execute("SELECT snapshot_json FROM archive_financial_profiles WHERE archive_id=? ORDER BY sequence DESC LIMIT 1", (archive_id,)).fetchone()
+        if profile:
+            normalized["_financial_snapshot"] = json.loads(profile[0])
         db.execute(
             "INSERT INTO replay_runs(id,archive_id,strategy_id,status,params_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-            (run_id, archive_id, strategy_id, "queued", json.dumps(params, ensure_ascii=False, allow_nan=False), now, now),
+            (run_id, archive_id, strategy_id, "queued", json.dumps(normalized, ensure_ascii=False, allow_nan=False), now, now),
         )
 
 
