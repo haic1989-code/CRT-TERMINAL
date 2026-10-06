@@ -17,9 +17,9 @@ import { INDICATOR_CATALOG } from './indicators/catalog'
 import type { IndicatorId, IndicatorPreferences, IndicatorSettings } from './indicators/catalog'
 import { readIndicatorPreferences, writeIndicatorPreferences } from './indicators/preferences'
 import { fetchMt5Bars, fetchMt5Calculation, fetchMt5ContextBars, fetchMt5FxBars, fetchMt5Orders, fetchMt5Positions, fetchMt5SymbolInfo, fetchMt5Symbols, type Mt5Order, type Mt5Position, type Mt5SymbolInfo } from './mt5Client'
-import type { AlertRule, BreakEvenMode, MarketBar, MarketContextSnapshot, SymbolSpec, TradePlan } from './domain/contracts'
+import type { BreakEvenMode, MarketBar, MarketContextSnapshot, SymbolSpec, TradePlan } from './domain/contracts'
 import { mt5AccountToDomain, mt5OrderToDomain, mt5PositionToDomain, mt5SymbolToDomain } from './adapters/mt5DomainAdapter'
-import { AlertEngine, BreakevenEngine, ContextSummaryEngine, CurrencyStrengthEngine, KeyLevelsEngine, MarketProfileEngine, MTFContextEngine, PlannerBreakEvenEngine, PortfolioRiskEngine, PositionSizingEngine, RiskGuardEngine, SessionEngine, planRisk as calculatePlanRisk } from './engines'
+import { BreakevenEngine, ContextSummaryEngine, CurrencyStrengthEngine, KeyLevelsEngine, MarketProfileEngine, MTFContextEngine, PlannerBreakEvenEngine, PortfolioRiskEngine, PositionSizingEngine, RiskGuardEngine, SessionEngine, planRisk as calculatePlanRisk } from './engines'
 import { VegaContextAdvisor } from './engines/vegaContext'
 import vegaPortrait from '../design/assets/final-ui/vega-main-shell.webp'
 import { ModuleDrawer } from './ModuleDrawer'
@@ -28,6 +28,7 @@ import { calculateReferenceLevels, type ReferenceLevelGroup } from './domain/ref
 import { allocateTargetLots } from './domain/targetAllocations'
 import { BottomTradingPanel } from './BottomTradingPanel'
 import { useBottomPanelState } from './hooks/useBottomPanelState'
+import { useAlertManagement } from './hooks/useAlertManagement'
 
 const QUICK_SYMBOLS = ['XAUUSD', 'BTCUSD', 'DJ30'] as const
 const TIMEFRAMES: ChartTimeframe[] = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1']
@@ -35,8 +36,6 @@ const CONTEXT_TIMEFRAMES = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1'] as const
 type ContextTimeframe = typeof CONTEXT_TIMEFRAMES[number]
 type DrawerId = 'planner' | 'risk' | 'fx' | 'profile' | 'drawing' | 'indicators' | 'alerts' | 'instruments' | 'context' | null
 
-const ALERTS_KEY = 'smartflow-x:alerts:v1'
-const ALERT_EVENTS_KEY = 'smartflow-x:alert-events:v1'
 const PRICE_LEVEL_GROUPS_KEY = 'smartflow-x:dragon-price-level-groups:v1'
 const PRICE_LEVEL_GROUP_OPTIONS: Array<{ id: ReferenceLevelGroup; label: string; detail: string }> = [
   { id: 'today', label: 'DZIŚ · D-H / D-L', detail: 'bieżący D1' },
@@ -51,26 +50,6 @@ const DRAWING_TOOLS = [
   { id: 'fib', label: 'Fibo' },
   { id: 'rectangle', label: 'Strefa' },
 ] as const
-function readStoredAlerts(): AlertRule[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(ALERTS_KEY) || '[]')
-    return Array.isArray(parsed) ? parsed.filter((rule) => rule && typeof rule.id === 'string' && typeof rule.symbol === 'string' && Number.isFinite(rule.level)) : []
-  } catch {
-    return []
-  }
-}
-
-function readStoredAlertEvents(): { ruleId: string; symbol: string; price: number; firedAt: number }[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(ALERT_EVENTS_KEY) || '[]')
-    return Array.isArray(parsed) ? parsed.filter((event) => event && typeof event.ruleId === 'string' && Number.isFinite(event.price) && Number.isFinite(event.firedAt)).slice(0, 30) : []
-  } catch {
-    return []
-  }
-}
-
 function readStoredPriceLevelGroups(): ReferenceLevelGroup[] {
   if (typeof window === 'undefined') return []
   try {
@@ -177,12 +156,7 @@ export function SmartFlowShell() {
   const [symbolResults, setSymbolResults] = useState<any[]>([])
   const [symbolSearchLoading, setSymbolSearchLoading] = useState(false)
   const [instrumentPinned, setInstrumentPinned] = useState(false)
-  const [activeAlerts, setActiveAlerts] = useState<AlertRule[]>(() => readStoredAlerts())
-  const activeAlertsRef = useRef<AlertRule[]>(activeAlerts)
-  const [alertEvents, setAlertEvents] = useState<{ ruleId: string; symbol: string; price: number; firedAt: number }[]>(() => readStoredAlertEvents())
-  const [focusedAlertId, setFocusedAlertId] = useState<string | null>(null)
-  const [alertDraft, setAlertDraft] = useState('')
-  const [alertCondition, setAlertCondition] = useState<'above' | 'below' | 'cross'>('cross')
+  const { alerts: activeAlerts, events: alertEvents, focusedAlertId, setFocusedAlertId, draft: alertDraft, setDraft: setAlertDraft, condition: alertCondition, setCondition: setAlertCondition, saveAlert, updateAlerts, focusAlert } = useAlertManagement({ lastPrice: feed.lastPrice, feedSymbol: feed.symbol, selectedSymbol: symbol, onSymbolChange: setSymbol, onOpenAlerts: () => setDrawer('alerts') })
   const [profileSession, setProfileSession] = useState<'day' | 'week' | 'custom'>('day')
   const [profileCustomStart, setProfileCustomStart] = useState('')
   const [profileCustomEnd, setProfileCustomEnd] = useState('')
@@ -347,20 +321,6 @@ export function SmartFlowShell() {
     return () => { dead = true; window.clearTimeout(timer) }
   }, [drawer, instrumentPromptOpen, symbolQuery])
   useEffect(() => {
-    if (!feed.lastPrice || !activeAlertsRef.current.length) return
-    const events: { ruleId: string; symbol: string; price: number; firedAt: number }[] = []
-    const activeSymbol = feed.symbol || symbol
-    const rules = activeAlertsRef.current.map((rule) => {
-      if (rule.symbol !== activeSymbol) return rule
-      const result = AlertEngine.evaluate(rule, feed.lastPrice!, Date.now(), activeSymbol)
-      if (result.event) events.push(result.event)
-      return result.rule
-    })
-    activeAlertsRef.current = rules
-    setActiveAlerts(rules)
-    if (events.length) setAlertEvents((current) => [...events, ...current].slice(0, 30))
-  }, [feed.lastPrice, feed.symbol, symbol])
-  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       if (drawer) {
@@ -377,13 +337,6 @@ export function SmartFlowShell() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [drawer, bottomExpanded, dragon])
-  useEffect(() => {
-    activeAlertsRef.current = activeAlerts
-    try { window.localStorage.setItem(ALERTS_KEY, JSON.stringify(activeAlerts)) } catch { /* persistence is best-effort */ }
-  }, [activeAlerts])
-  useEffect(() => {
-    try { window.localStorage.setItem(ALERT_EVENTS_KEY, JSON.stringify(alertEvents.slice(0, 30))) } catch { /* persistence is best-effort */ }
-  }, [alertEvents])
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(''), 2600)
@@ -575,36 +528,6 @@ export function SmartFlowShell() {
     if (!dragon) setToast(lunaMessage(`POZYCJA ${side === 'long' ? 'DŁUGA' : 'KRÓTKA'} · USTAW NA WYKRESIE`))
   }
   const cancelPlan = () => { setPlannerConfirmationOpen(false); notifyConsole('PLAN ANULOWANY'); setPlannerLevelRequest(null); setPlannerCancelRequest({ nonce: Date.now() }) }
-  const saveAlert = () => {
-    const level = Number(alertDraft)
-    if (!(level > 0)) return
-    if (focusedAlertId) {
-      const rules = activeAlertsRef.current.map((rule) => rule.id === focusedAlertId ? { ...rule, level, condition: alertCondition, symbol: feed.symbol || symbol } : rule)
-      activeAlertsRef.current = rules
-      setActiveAlerts(rules)
-      return
-    }
-    const rule = { id: crypto.randomUUID(), symbol: feed.symbol || symbol, level, condition: alertCondition, enabled: true } as AlertRule
-    const rules = [rule, ...activeAlertsRef.current]
-    activeAlertsRef.current = rules
-    setActiveAlerts(rules)
-    setAlertDraft('')
-  }
-  const updateAlerts = (update: AlertRule[] | ((current: AlertRule[]) => AlertRule[])) => {
-    const rules = typeof update === 'function' ? update(activeAlertsRef.current) : update
-    activeAlertsRef.current = rules
-    setActiveAlerts(rules)
-    if (focusedAlertId && !rules.some((rule) => rule.id === focusedAlertId)) setFocusedAlertId(null)
-  }
-  const focusAlert = (id: string) => {
-    const rule = activeAlertsRef.current.find((item) => item.id === id)
-    if (!rule) return
-    if (symbol !== rule.symbol) setSymbol(rule.symbol)
-    setFocusedAlertId(rule.id)
-    setAlertDraft(String(rule.level))
-    setAlertCondition(rule.condition)
-    setDrawer('alerts')
-  }
   const selectPosition = (position: Mt5Position) => {
     setSelectedPositionTicket(position.ticket)
     setSelectedOrderTicket(null)
