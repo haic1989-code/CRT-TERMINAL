@@ -1,39 +1,36 @@
 name: CRT Terminal Signed Release
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - CRT Terminal CI
+    types:
+      - completed
     branches:
       - main
-    paths:
-      - '.github/workflows/build-windows-installer.yml'
-      - '.github/workflows/crt-terminal-ci.yml'
-      - 'src/**'
-      - 'scripts/**'
-      - 'public/**'
-      - 'src-tauri/**'
-      - 'mt5-bridge/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'index.html'
-      - 'vite.config.*'
-      - 'tsconfig*.json'
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: crt-terminal-installer-${{ github.ref }}
-  cancel-in-progress: true
+  group: crt-terminal-signed-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
   build:
     name: Build single NSIS installer
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -47,30 +44,51 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
+      - name: Skip an already published app version
+        id: release-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $releaseVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $releaseTag = "v$releaseVersion"
+          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "release_needed=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Release $releaseTag already exists; no release will be replaced."
+          } else {
+            "release_needed=true" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Require signing key
+        if: steps.release-check.outputs.release_needed == 'true'
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if (-not $env:SIGNING_KEY) { throw 'Configure TAURI_SIGNING_PRIVATE_KEY in repository Actions secrets before publishing updates.' }
 
       - name: Build signed CRT Terminal installer
+        if: steps.release-check.outputs.release_needed == 'true'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: npm run app:build -- --bundles nsis
 
       - name: Prepare signed update manifest
+        if: steps.release-check.outputs.release_needed == 'true'
         run: node scripts/prepare-update-release.mjs
 
       - name: Publish complete release
+        if: steps.release-check.outputs.release_needed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           $releaseVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $releaseTag = "v$releaseVersion"
           gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) { throw "Release $releaseTag already exists; increment app version. Published releases must not be replaced." }
-          gh release create $releaseTag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "CRT Terminal $releaseVersion" --notes-file docs/current-release.md
+          gh release create $releaseTag --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --draft --title "CRT Terminal $releaseVersion" --notes-file docs/current-release.md
           if ($LASTEXITCODE -ne 0) { throw 'Release draft creation failed' }
           $releaseFiles = @(Get-ChildItem .smartflow-runtime/release/*_x64-setup.exe,.smartflow-runtime/release/*_x64-setup.exe.sig | ForEach-Object { $_.FullName })
           gh release upload $releaseTag @releaseFiles .smartflow-runtime/release/latest.json --repo $env:GITHUB_REPOSITORY
@@ -80,9 +98,10 @@ jobs:
 
 
       - name: Publish installer artifact
+        if: steps.release-check.outputs.release_needed == 'true'
         uses: actions/upload-artifact@v6
         with:
-          name: CRT-Terminal-setup-${{ github.sha }}
+          name: CRT-Terminal-setup-${{ github.event.workflow_run.head_sha }}
           path: src-tauri/target/release/bundle/nsis/*_x64-setup.exe
           if-no-files-found: error
           retention-days: 30

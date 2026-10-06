@@ -22,6 +22,7 @@ import {
 } from './mt5Client'
 import './fx-replay.css'
 import { indexReplayCandles, replayCandlesAt, replayCursorAt } from './replayPlayback'
+import { getReplayImportRange } from './replayImportRange'
 
 function localInputTime(value: number) {
   const date = new Date(value)
@@ -34,16 +35,6 @@ function defaultImportTime(dayOffset: number, endOfDay = false) {
   date.setDate(date.getDate() + dayOffset)
   date.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, 0, 0)
   return localInputTime(date.getTime())
-}
-
-function importRange(from: string, to: string, wholeDays: boolean, nowMs: number) {
-  if (!wholeDays) return { fromMs: new Date(from).getTime(), toMs: new Date(to).getTime() }
-  const start = new Date(from.slice(0, 10) + 'T00:00:00')
-  const end = new Date(to.slice(0, 10) + 'T00:00:00')
-  // Advance a calendar day in local time, rather than adding 24 hours: DST
-  // days can have 23/25 hours. The backend's end timestamp is inclusive.
-  end.setDate(end.getDate() + 1)
-  return { fromMs: start.getTime(), toMs: Math.min(end.getTime() - 1, nowMs) }
 }
 
 function showTime(value: number) {
@@ -318,7 +309,15 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
 
   const beginImport = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const { fromMs, toMs } = importRange(fromTime, toTime, rangeMode === 'days', Date.now())
+    let range: { fromMs: number; toMs: number } | null = null
+    try {
+      range = getReplayImportRange(fromTime, toTime, rangeMode === 'days', Date.now())
+    } catch {
+      setError('Wybierz symbol oraz poprawny zakres czasu.')
+      return
+    }
+    if (!range) return
+    const { fromMs, toMs } = range
     if (!symbol.trim() || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs <= 0 || toMs <= fromMs) {
       setError('Wybierz symbol oraz poprawny zakres czasu.')
       return

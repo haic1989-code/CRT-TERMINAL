@@ -184,7 +184,7 @@ class ReplayArchiveTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             report = run(store.database_path(), "test", aid, strategy, {})
         self.assertEqual(report["tick_count"], 2)
-        self.assertEqual(report["engine_version"], "3.0")
+        self.assertEqual(report["engine_version"], "3.1")
 
     def test_csv_bars_and_folder_escape_are_rejected(self):
         from replay_import_worker import csv_blocks
