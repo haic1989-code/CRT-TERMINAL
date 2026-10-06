@@ -93,7 +93,7 @@ Obliczenia tickowe działają poza renderowaniem wykresu. Silnik może przetworz
 - [x] Dodać brokerowy krok ceny, wolumen z limitu ryzyka, modyfikację SL/TP oraz anulowanie zleceń oczekujących.
 - [x] Na końcu archiwum rozliczyć otwarte pozycje po ostatnim Bid/Ask i anulować niewypełnione zlecenia.
 - [x] Wczytać skrypty API v1 do edytora jako kopię do zapisania w v2.
-- [ ] Kryterium ukończenia: to samo archiwum, skrypt i parametry dają ten sam dziennik transakcji przy ponownym uruchomieniu.
+- [x] Kryterium ukończenia: to samo archiwum, skrypt i parametry dają ten sam dziennik transakcji przy ponownym uruchomieniu — dwa przebiegi tygodnia XAUUSDs w audycie 0.1.38.
 
 ### Etap 4 — przycisk i widok FX Replay
 

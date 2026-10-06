@@ -99,6 +99,8 @@ Gotowe archiwum działa offline. Pomyślny zapis oznacza ukończenie odczytu ż�
 - Import rzeczywistych ticków do osobnego archiwum oraz symulacja przykładowego skryptu w izolowanym procesie `-I -S`.
 - Dwie symulacje tego samego tygodnia i skryptu: identyczny dziennik zdarzeń; czasy 14,81 s i 14,91 s.
 - Pełny zestaw Python: 33 testy PASS; TypeScript: 108 testów PASS. Kompilacja frontendu, składnia Python i `cargo check --offline`: PASS.
+- CI używa osobnego venv: instalacja NumPy w katalogu użytkownika była niewidoczna dla importera `-I`. Dwa testy wizualne bazy 0.1.37 wymagały usuniętego stałego panelu egzekucji; obecne asercje sprawdzają ukrycie panelu przed rysowaniem i zablokowaną wysyłkę w komunikacie Luny po narysowaniu pozycji.
+- Poprawione dwa testy wizualne przeszły lokalnie w Playwright. Podpisane wydanie 0.1.38 opublikowano; odczyt publicznego `releases/latest/download/latest.json` potwierdził wersję 0.1.38, właściwy URL instalatora i obecność podpisu. To kontrola publikacji, nie wykonanie instalacji.
 - Akceptacja aktualizacji w zainstalowanej aplikacji Windows oraz porównanie transakcji z natywnym testerem MT5: NOT RUN.
 
 ## Źródła wzorców i zasad
