@@ -1,4 +1,11 @@
-# CRT Terminal 0.1.39
+# CRT Terminal 0.1.40
+
+- FX Replay history selection defaults to full local calendar days: the beginning of the first selected date through the last millisecond of the final selected date, inclusive. The default range is the last seven completed days, ending yesterday.
+- Selecting today imports only through the moment the request starts, with an explicit Luna message that the day is incomplete. Future dates remain unavailable. An optional exact date/time mode retains intraday range selection and access to earlier cache ranges.
+- Calendar boundaries use local date arithmetic, including daylight-saving transitions; archives still store UTC timestamps. No broker session timezone is guessed, and no ticks are synthesized outside a session.
+- TypeScript/Vite and Rust compilation are separate from installed Windows acceptance. No local tests were added or run for this scoped date-selector fix.
+
+## Broker accounting improvements retained (0.1.39)
 
 - FX Replay engine 3.1 calculates P/L and risk from contract size for supported OTC instruments whose profit currency equals the deposit currency. Known currency mismatches are no longer priced using a current tick-value conversion.
 - Fixed leverage mode identifiers: Forex 0 and CFD Leverage 4 scale with leverage; Forex No Leverage 5 does not.

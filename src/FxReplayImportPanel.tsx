@@ -29,6 +29,23 @@ function localInputTime(value: number) {
   return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes())
 }
 
+function defaultImportTime(dayOffset: number, endOfDay = false) {
+  const date = new Date()
+  date.setDate(date.getDate() + dayOffset)
+  date.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, 0, 0)
+  return localInputTime(date.getTime())
+}
+
+function importRange(from: string, to: string, wholeDays: boolean, nowMs: number) {
+  if (!wholeDays) return { fromMs: new Date(from).getTime(), toMs: new Date(to).getTime() }
+  const start = new Date(from.slice(0, 10) + 'T00:00:00')
+  const end = new Date(to.slice(0, 10) + 'T00:00:00')
+  // Advance a calendar day in local time, rather than adding 24 hours: DST
+  // days can have 23/25 hours. The backend's end timestamp is inclusive.
+  end.setDate(end.getDate() + 1)
+  return { fromMs: start.getTime(), toMs: Math.min(end.getTime() - 1, nowMs) }
+}
+
 function showTime(value: number) {
   return new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(value) + ' UTC'
 }
@@ -154,8 +171,9 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
   const [fileName, setFileName] = useState('')
   const [utcOffset, setUtcOffset] = useState('0')
   const [symbol, setSymbol] = useState(initialSymbol)
-  const [fromTime, setFromTime] = useState(localInputTime(now - 7 * 24 * 60 * 60 * 1000))
-  const [toTime, setToTime] = useState(localInputTime(now))
+  const [rangeMode, setRangeMode] = useState('days')
+  const [fromTime, setFromTime] = useState(() => defaultImportTime(-7))
+  const [toTime, setToTime] = useState(() => defaultImportTime(-1, true))
   const [archives, setArchives] = useState<ReplayArchive[]>([])
   const [strategies, setStrategies] = useState<ReplayStrategy[]>([])
   const [strategyName, setStrategyName] = useState('Średnia krocząca — przykład')
@@ -300,8 +318,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
 
   const beginImport = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const fromMs = new Date(fromTime).getTime()
-    const toMs = new Date(toTime).getTime()
+    const { fromMs, toMs } = importRange(fromTime, toTime, rangeMode === 'days', Date.now())
     if (!symbol.trim() || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs <= 0 || toMs <= fromMs) {
       setError('Wybierz symbol oraz poprawny zakres czasu.')
       return
@@ -515,12 +532,15 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <p className="fx-replay-note">UTC: 0; UTC+2: 120. Wskaż dokładny symbol źródłowy. CSV nie zapisuje nazwy brokera; nie rozpoznaję jej automatycznie. Plik świec OHLC nie nadaje się do testu na rzeczywistych tickach.</p>
           </>}
           <label>SYMBOL BROKERA<input value={symbol} maxLength={64} onChange={event => setSymbol(event.target.value)} placeholder="np. XAUUSD.a" /></label>
+          <label>ZAKRES HISTORII<select value={rangeMode} disabled={!!activeJob} onChange={event => setRangeMode(event.target.value)}><option value="days">Całe dni · od początku do końca dnia</option><option value="times">Dokładne daty i godziny</option></select></label>
           <div className="fx-replay-range">
-            <label>OD<input type="datetime-local" value={fromTime} onChange={event => setFromTime(event.target.value)} /></label>
-            <label>DO<input type="datetime-local" value={toTime} onChange={event => setToTime(event.target.value)} /></label>
+            <label>OD<input required type={rangeMode === 'days' ? 'date' : 'datetime-local'} max={rangeMode === 'days' ? localInputTime(now).slice(0, 10) : localInputTime(now)} value={rangeMode === 'days' ? fromTime.slice(0, 10) : fromTime} onChange={event => setFromTime(rangeMode === 'days' && event.target.value ? event.target.value + 'T00:00' : event.target.value)} /></label>
+            <label>DO · WŁĄCZNIE<input required type={rangeMode === 'days' ? 'date' : 'datetime-local'} max={rangeMode === 'days' ? localInputTime(now).slice(0, 10) : localInputTime(now)} value={rangeMode === 'days' ? toTime.slice(0, 10) : toTime} onChange={event => setToTime(rangeMode === 'days' && event.target.value ? event.target.value + 'T23:59' : event.target.value)} /></label>
           </div>
+          {rangeMode === 'days' && <p className="fx-replay-note">Luna › Wybrane dni obejmuję od 00:00:00 do 23:59:59,999 w Twoim czasie lokalnym. Domyślnie wybieram siedem zakończonych dni. Archiwum zapisuję w UTC.</p>}
+          {rangeMode === 'days' && toTime.slice(0, 10) === localInputTime(now).slice(0, 10) && <p className="fx-replay-note">Luna › Dzisiaj dzień jeszcze trwa. Pobiorę dostępne ticki do chwili rozpoczęcia importu; to archiwum nie obejmie całego dnia.</p>}
           <div className="fx-replay-data-mode"><span>TRYB TESTU</span><b>RZECZYWISTE TICKI MT5 · BID / ASK</b><small>Zapisujemy rzeczywiste ticki; nie generujemy ich ze świec OHLC.</small></div>
-          <p className="fx-replay-note">Luna › MT5 dostarcza historię lub samą specyfikację symbolu przy imporcie pliku. Daty poniżej są w Twoim czasie lokalnym, archiwum zapiszę w UTC. Gotowe dane wykorzystasz offline.</p>
+          <p className="fx-replay-note">Luna › MT5 dostarcza historię lub samą specyfikację symbolu przy imporcie pliku. Daty wybierasz w swoim czasie lokalnym; poza sesją pojawią się wyłącznie rzeczywiste ticki dostępne u brokera. Gotowe dane wykorzystasz offline.</p>
           <div className="fx-replay-actions">
             <button type="submit" disabled={busy || !!activeJob}>{busy ? 'ŁĄCZĘ Z MT5…' : 'IMPORTUJ TICKI'}</button>
             {activeJob && <button type="button" className="secondary" disabled={job?.status !== 'importing'} onClick={() => void stopImport()}>{job?.status === 'finalizing' ? 'FINALIZUJĘ ARCHIWUM…' : 'ANULUJ IMPORT'}</button>}
