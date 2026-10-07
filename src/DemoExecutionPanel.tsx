@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MarketFeedState, PlannerSnapshot } from './MarketChart'
-import { executionStatus, isExecutionRequestNotFound, prepareExecution, readExecution, sendExecution, unresolvedExecution, type ExecutionRecord, type ExecutionStatus } from './mt5Execution'
+import { classifyPendingOrder, executionStatus, isExecutionRequestNotFound, isFreshExecutionQuote, prepareExecution, readExecution, sendExecution, unresolvedExecution, type ExecutionRecord, type ExecutionStatus, type PendingExecutionKind } from './mt5Execution'
 
 const STORAGE = 'crt-terminal:pending-execution:v1'
-const orderTypeLabels: Record<number, string> = { 0: 'BUY MARKET', 1: 'SELL MARKET', 2: 'BUY LIMIT', 3: 'SELL LIMIT', 4: 'BUY STOP', 5: 'SELL STOP', 6: 'BUY STOP LIMIT', 7: 'SELL STOP LIMIT' }
+const orderLabels: Record<PendingExecutionKind, string> = { buy_limit: 'BUY LIMIT', buy_stop: 'BUY STOP', sell_limit: 'SELL LIMIT', sell_stop: 'SELL STOP' }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Nie mogę potwierdzić wyniku. Sprawdźmy go w MT5.'
 type Props = { feed: MarketFeedState; planner: PlannerSnapshot | null; volume: number | null; unsupportedManagement: boolean; confirmationOpen: boolean; onCancel: () => void; onComplete: (message: string) => void }
 /** A single explicit Luna confirmation runs the existing DEMO preflight and one-shot send path. */
@@ -16,7 +16,11 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
   const lock = useRef(false), mounted = useRef(true)
   const recoveryId = useRef<string | null>(null)
   const account = feed.account
-  const kind = planner?.side === 'long' ? 'buy_limit' : 'sell_limit'
+  const quoteFresh = isFreshExecutionQuote(feed)
+  const side = planner?.side === 'long' ? 'buy' : 'sell'
+  const kind: PendingExecutionKind | null = planner && quoteFresh && feed.bid !== undefined && feed.ask !== undefined
+    ? classifyPendingOrder(side, planner.entry, feed.bid, feed.ask) : null
+  const orderLabel = kind ? orderLabels[kind] : 'PENDING ORDER'
   const planKey = JSON.stringify([feed.symbol, account?.login, account?.server, planner, volume, kind, unsupportedManagement])
   const currentKey = useRef(planKey); currentKey.current = planKey
   const unresolved = Boolean(record && unresolvedExecution(record))
@@ -67,9 +71,13 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     : !status.enabled ? status.reason || 'Najpierw uzgodnię poprzednią wysyłkę z MT5.'
       : !planner ? 'Wskaż wejście, Stop Loss i Take Profit na wykresie.'
         : !account || !feed.symbol ? 'Czekam na symbol i konto z MT5.'
-          : kind === 'buy_limit' && feed.ask !== undefined && planner.entry >= feed.ask ? 'Dla BUY LIMIT wejście musi być poniżej bieżącego Ask.'
-            : kind === 'sell_limit' && feed.bid !== undefined && planner.entry <= feed.bid ? 'Dla SELL LIMIT wejście musi być powyżej bieżącego Bid.'
-              : !feed.marketSession?.available ? 'Brak potwierdzonych godzin sesji symbolu w MT5.'
+          : !quoteFresh ? 'Poczekajmy na aktualne notowanie Bid/Ask.'
+            : !kind ? 'Wejście musi leżeć po właściwej stronie aktualnego Bid/Ask.'
+              : kind === 'buy_limit' && (feed.ask === undefined || planner.entry >= feed.ask) ? 'Dla BUY LIMIT wejście musi być poniżej bieżącego Ask.'
+                : kind === 'buy_stop' && (feed.ask === undefined || planner.entry <= feed.ask) ? 'Dla BUY STOP wejście musi być powyżej bieżącego Ask.'
+                  : kind === 'sell_limit' && (feed.bid === undefined || planner.entry <= feed.bid) ? 'Dla SELL LIMIT wejście musi być powyżej bieżącego Bid.'
+                    : kind === 'sell_stop' && (feed.bid === undefined || planner.entry >= feed.bid) ? 'Dla SELL STOP wejście musi być poniżej bieżącego Bid.'
+                      : !feed.marketSession?.available ? 'Brak potwierdzonych godzin sesji symbolu w MT5.'
                 : feed.marketSession.trade_open === false ? 'Sesja handlowa jest zamknięta. Zlecenie pozostaje zablokowane.'
                   : unsupportedManagement ? 'Przed wysyłką wyłącz TP1–TP3 oraz BE. Obsługuję pełny TP i SL.'
                     : feed.status !== 'live' ? feed.status === 'closed' ? 'Rynek jest zamknięty. Poczekajmy na otwarcie sesji.' : 'Poczekajmy na aktualne notowanie.'
@@ -82,7 +90,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     finally { lock.current = false; if (mounted.current) setBusy(false) }
   }
   const confirm = () => void run(async () => {
-    if (block || !planner || !volume || !account || !feed.symbol || unresolved) return
+    if (block || !planner || !kind || !volume || !account || !feed.symbol || unresolved) return
     const key = currentKey.current
     const quote = planner.side === 'long' ? feed.ask : feed.bid
     if (!quote || !Number.isFinite(quote)) throw new Error('Nie mam aktualnej ceny Bid/Ask. Poczekajmy na notowanie.')
@@ -93,7 +101,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     recoveryId.current = clientRequestId
     setNotice('Luna › Sprawdzam konto DEMO, poziomy i ryzyko przed wysyłką…')
     const prepared = await prepareExecution({ clientRequestId, accountLogin: account.login, accountServer: account.server,
-      symbol: feed.symbol, side: planner.side === 'long' ? 'buy' : 'sell', kind, volume, entry: planner.entry, sl: planner.sl, tp: planner.tp, quote, deviationPoints: 20 })
+      symbol: feed.symbol, side, kind, volume, entry: planner.entry, sl: planner.sl, tp: planner.tp, quote, deviationPoints: 20 })
     setRecord(prepared); setNotice(prepared.message)
     if (prepared.state !== 'PREPARED') return
     if (currentKey.current !== key || Date.now() >= prepared.expiresAt) {
@@ -133,9 +141,9 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
   if (!confirmationOpen && !unresolved) return null
   return <section className="demo-execution luna-trade-confirm" aria-label="Potwierdzenie zlecenia DEMO przez Lunę">
     <h3>{unresolved ? 'LUNA · UZGADNIAM WYNIK' : 'LUNA · POTWIERDZENIE POZYCJI'}</h3>
-    <p className="execution-luna" role="status">Luna › {unresolved || showNotice ? notice : `Czy wysłać ${kind === 'buy_limit' ? 'BUY LIMIT' : 'SELL LIMIT'} na koncie DEMO?`}</p>
+    <p className="execution-luna" role="status">Luna › {unresolved || showNotice ? notice : `Czy wysłać ${orderLabel} na koncie DEMO?`}</p>
     {confirmationOpen && planner && <div className="execution-review">
-      <strong>{feed.symbol || 'SYMBOL'} · {kind === 'buy_limit' ? 'BUY LIMIT' : 'SELL LIMIT'} · {planner.side === 'long' ? 'DŁUGA' : 'KRÓTKA'}</strong>
+      <strong>{feed.symbol || 'SYMBOL'} · {orderLabel} · {planner.side === 'long' ? 'DŁUGA' : 'KRÓTKA'}</strong>
       <dl>{[['Wolumen', `${volume ?? '—'} lot`], ['Wejście', planner.entry], ['SL', planner.sl], ['Pełny TP', planner.tp]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
       {block && <p className="execution-luna dim">Luna › {block}</p>}
       <div className="execution-actions"><button className="execution-send" disabled={busy || Boolean(block) || unresolved} onClick={confirm}>Potwierdź pozycję · wyślij DEMO</button><button className="execution-cancel" disabled={busy || unresolved} onClick={onCancel}>Anuluj rysowanie</button></div>
