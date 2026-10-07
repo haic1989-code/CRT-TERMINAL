@@ -281,6 +281,7 @@ test('approved text deck integrates the complete introduction, controls and manu
   await chart.click({position:{x:box.width*.58,y:box.height*.52}})
   await expect(chart).toHaveAttribute('data-planner-side','long')
   await expect(deck.locator('.luna-trade-confirm')).toBeVisible()
+  await expect(deck.locator('.luna-trade-confirm .execution-review strong')).toContainText(/(?:BUY|SELL) (?:LIMIT|STOP)/)
   await expect(deck.locator('.luna-trade-confirm')).toContainText('Mogę wysyłać zlecenia tylko z zainstalowanego terminalu i jego własnego mostu MT5.')
   await expect(deck.getByRole('button',{name:'Potwierdź pozycję · wyślij DEMO',exact:true})).toBeDisabled()
   const lots=deck.getByRole('slider',{name:'Wielkość pozycji w lotach'})

@@ -6,7 +6,7 @@ vi.mock('./bridgeEndpoint', () => ({
 }))
 
 import { bridgeFetch, resolveBridgeEndpoint } from './bridgeEndpoint'
-import { ExecutionBackendError, executionBackendError, executionStatus, isExecutionRequestNotFound, readExecution } from './mt5Execution'
+import { classifyPendingOrder, ExecutionBackendError, executionBackendError, executionStatus, isExecutionRequestNotFound, isFreshExecutionQuote, readExecution } from './mt5Execution'
 
 const endpoint = { url: 'http://127.0.0.1:54321', instance: 'instance-a', owner: 'owner-a', protocol_version: 5, execution_token: 'private-session-token' }
 
@@ -50,5 +50,34 @@ describe('execution handshake diagnostics', () => {
     vi.mocked(resolveBridgeEndpoint).mockResolvedValue(endpoint)
     vi.mocked(bridgeFetch).mockRejectedValue(new TypeError('Failed to fetch'))
     await expect(executionStatus()).rejects.toThrow('Transport mostu MT5: Failed to fetch')
+  })
+})
+
+
+describe('pending order classification', () => {
+  const bid = 100
+  const ask = 101
+
+  it.each([
+    ['buy', 100.5, 'buy_limit'],
+    ['buy', 101.5, 'buy_stop'],
+    ['sell', 101.5, 'sell_limit'],
+    ['sell', 99.5, 'sell_stop'],
+  ] as const)('%s entry %s classifies as %s', (side, entry, kind) => {
+    expect(classifyPendingOrder(side, entry, bid, ask)).toBe(kind)
+  })
+
+  it('accepts a valid fresh live Bid/Ask timestamp stored in seconds', () => {
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid, ask }, 1_005_000)).toBe(true)
+  })
+
+  it('fails closed at the quote, with invalid prices, or without a fresh live Bid/Ask', () => {
+    expect(classifyPendingOrder('buy', ask, bid, ask)).toBeNull()
+    expect(classifyPendingOrder('sell', bid, bid, ask)).toBeNull()
+    expect(classifyPendingOrder('buy', Number.NaN, bid, ask)).toBeNull()
+    expect(isFreshExecutionQuote({ status: 'stale', lastTickAt: 1000, bid, ask }, 1_000_000)).toBe(false)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 984, bid, ask }, 1_000_000)).toBe(false)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid: undefined, ask }, 1_000_000)).toBe(false)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1002, bid, ask }, 1_000_000)).toBe(false)
   })
 })

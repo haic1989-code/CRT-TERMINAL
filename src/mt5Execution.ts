@@ -2,16 +2,32 @@ import { bridgeFetch, resolveBridgeEndpoint } from './bridgeEndpoint'
 
 export type ExecutionState = 'PREPARED' | 'INTENT' | 'SUBMITTING' | 'ACKNOWLEDGED' | 'UNKNOWN' | 'REJECTED' | 'RECONCILED'
 export type ExecutionRecord = {
-  clientRequestId: string; state: ExecutionState; confirmationToken: string; expiresAt: number; kind: 'market' | 'buy_limit' | 'sell_limit' | 'pending'
+  clientRequestId: string; state: ExecutionState; confirmationToken: string; expiresAt: number; kind: 'market' | PendingExecutionKind | 'pending'
   account: { login: number; server: string; terminal: string }
   request: { symbol: string; volume: number; type: number; price: number; sl: number; tp: number; deviation: number }
   risk: { loss: number; riskPercent: number; margin: number; currency: string }
   message: string; result?: { retcode?: number; order?: number; deal?: number; filledVolume?: number }
 }
 export type ExecutionStatus = { mode: 'DEMO_ONLY'; enabled: boolean; reason?: string; account: ExecutionRecord['account']; unresolved: Array<{ clientRequestId: string; state: ExecutionState }> }
+export type PendingExecutionKind = 'buy_limit' | 'buy_stop' | 'sell_limit' | 'sell_stop'
+export type ExecutionQuote = { status: string; lastTickAt: number | null; bid?: number; ask?: number }
+
+export function isFreshExecutionQuote(feed: ExecutionQuote, now = Date.now()): boolean {
+  if (feed.status !== 'live' || !Number.isFinite(feed.lastTickAt) || feed.lastTickAt === null) return false
+  const age = now - feed.lastTickAt * 1000
+  return age >= -1000 && age <= 15000 && Number.isFinite(feed.bid) && Number.isFinite(feed.ask)
+    && (feed.bid as number) > 0 && (feed.ask as number) >= (feed.bid as number)
+}
+
+export function classifyPendingOrder(side: 'buy' | 'sell', entry: number, bid: number, ask: number): PendingExecutionKind | null {
+  if (![entry, bid, ask].every(Number.isFinite) || bid <= 0 || ask < bid) return null
+  if (side === 'buy') return entry < ask ? 'buy_limit' : entry > ask ? 'buy_stop' : null
+  return entry > bid ? 'sell_limit' : entry < bid ? 'sell_stop' : null
+}
+
 export type ExecutionPlan = {
   clientRequestId: string; accountLogin: number; accountServer: string; symbol: string; side: 'buy' | 'sell'
-  kind: 'market' | 'buy_limit' | 'sell_limit'; volume: number; entry: number; sl: number; tp: number; quote: number; deviationPoints: number
+  kind: 'market' | PendingExecutionKind; volume: number; entry: number; sl: number; tp: number; quote: number; deviationPoints: number
 }
 
 type ErrorPayload = { detail?: unknown; error?: unknown; hint?: unknown; message?: unknown }
@@ -104,7 +120,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     ? data.mode === 'DEMO_ONLY' && typeof data.enabled === 'boolean' && accountValid && Array.isArray(data.unresolved) && data.unresolved.every(item => isObject(item) && typeof item.clientRequestId === 'string')
     : accountValid && typeof data.clientRequestId === 'string' && typeof data.confirmationToken === 'string' && finite(data.expiresAt)
       && typeof data.state === 'string' && ['PREPARED', 'INTENT', 'SUBMITTING', 'ACKNOWLEDGED', 'UNKNOWN', 'REJECTED', 'RECONCILED'].includes(data.state)
-      && typeof data.kind === 'string' && ['market', 'buy_limit', 'sell_limit', 'pending'].includes(data.kind) && typeof data.message === 'string' && isObject(request) && typeof request.symbol === 'string'
+      && typeof data.kind === 'string' && ['market', 'buy_limit', 'buy_stop', 'sell_limit', 'sell_stop', 'pending'].includes(data.kind) && typeof data.message === 'string' && isObject(request) && typeof request.symbol === 'string'
       && ['volume', 'type', 'price', 'sl', 'tp', 'deviation'].every(field => finite(request[field]))
       && isObject(risk) && ['loss', 'riskPercent', 'margin'].every(field => finite(risk[field])) && typeof risk.currency === 'string'
   if (!valid) throw new Error('Odpowiedź mostu jest niekompletna. Nie potwierdzam wysyłki; sprawdźmy dziennik MT5.')

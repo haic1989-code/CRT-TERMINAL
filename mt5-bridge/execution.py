@@ -43,6 +43,15 @@ def number(value: Any) -> float:
     return float(value)
 
 
+def pending_order_type(kind: str) -> int:
+    return {
+        "buy_limit": mt5.ORDER_TYPE_BUY_LIMIT,
+        "buy_stop": mt5.ORDER_TYPE_BUY_STOP,
+        "sell_limit": mt5.ORDER_TYPE_SELL_LIMIT,
+        "sell_stop": mt5.ORDER_TYPE_SELL_STOP,
+    }[kind]
+
+
 def backend_exception_message(error: Exception) -> str:
     """Expose a bounded local MT5 diagnostic without returning a traceback."""
     detail = " ".join(str(error).split())[:400]
@@ -240,13 +249,13 @@ class ExecutionService:
         tick = required(mt5.symbol_info_tick(symbol), "QUOTE_UNAVAILABLE")
         side = body.get("side")
         kind = body.get("kind")
-        if side not in ("buy", "sell") or kind not in ("market", "buy_limit", "sell_limit"):
-            deny("INVALID_KIND", "Wybierz pozycję rynkową, Buy Limit albo Sell Limit.", 400)
+        if side not in ("buy", "sell") or kind not in ("market", "buy_limit", "buy_stop", "sell_limit", "sell_stop"):
+            deny("INVALID_KIND", "Wybierz pozycję rynkową albo poprawny typ Buy/Sell Limit/Stop.", 400)
         buying = side == "buy"
-        if kind == "buy_limit" and not buying:
-            deny("LIMIT_SIDE_MISMATCH", "Buy Limit wymaga planu DŁUGA.", 400)
-        if kind == "sell_limit" and buying:
-            deny("LIMIT_SIDE_MISMATCH", "Sell Limit wymaga planu KRÓTKA.", 400)
+        if kind in ("buy_limit", "buy_stop") and not buying:
+            deny("ORDER_SIDE_MISMATCH", "Buy Limit/Stop wymaga planu DŁUGA.", 400)
+        if kind in ("sell_limit", "sell_stop") and buying:
+            deny("ORDER_SIDE_MISMATCH", "Sell Limit/Stop wymaga planu KRÓTKA.", 400)
         price = float(tick.ask if buying else tick.bid) if kind == "market" else number(body.get("entry"))
         deviation = body.get("deviationPoints")
         if type(deviation) is not int or not 0 <= deviation <= 100:
@@ -255,10 +264,14 @@ class ExecutionService:
             deny("QUOTE_MOVED", "Notowanie zmieniło się od odczytu w terminalu. Odśwież podsumowanie.")
         if kind != "market":
             if kind == "buy_limit" and price >= tick.ask:
-                deny("LIMIT_PRICE_INVALID", "Buy Limit musi leżeć poniżej bieżącego Ask.")
+                deny("PENDING_PRICE_INVALID", "Buy Limit musi leżeć poniżej bieżącego Ask.")
+            if kind == "buy_stop" and price <= tick.ask:
+                deny("PENDING_PRICE_INVALID", "Buy Stop musi leżeć powyżej bieżącego Ask.")
             if kind == "sell_limit" and price <= tick.bid:
-                deny("LIMIT_PRICE_INVALID", "Sell Limit musi leżeć powyżej bieżącego Bid.")
-            order_type = mt5.ORDER_TYPE_BUY_LIMIT if kind == "buy_limit" else mt5.ORDER_TYPE_SELL_LIMIT
+                deny("PENDING_PRICE_INVALID", "Sell Limit musi leżeć powyżej bieżącego Bid.")
+            if kind == "sell_stop" and price >= tick.bid:
+                deny("PENDING_PRICE_INVALID", "Sell Stop musi leżeć poniżej bieżącego Bid.")
+            order_type = pending_order_type(kind)
             filling = mt5.ORDER_FILLING_RETURN
         else:
             order_type = mt5.ORDER_TYPE_BUY if buying else mt5.ORDER_TYPE_SELL
@@ -326,7 +339,7 @@ class ExecutionService:
                 db.execute("COMMIT")
                 return self.public(record)  # Replay never calls order_send.
             if record.get("kind") == "pending":
-                record.update(state="REJECTED", message="Stary typ Oczekujące nie jest już wysyłany. Wybierz osobno Buy Limit albo Sell Limit i sprawdź plan ponownie.")
+                record.update(state="REJECTED", message="Stary typ Oczekujące nie jest już wysyłany. Wybierz konkretny typ Buy/Sell Limit/Stop i sprawdź plan ponownie.")
                 self.save(db, record)
                 db.execute("COMMIT")
                 return self.public(record)

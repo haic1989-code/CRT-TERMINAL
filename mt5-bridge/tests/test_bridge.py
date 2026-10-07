@@ -40,6 +40,10 @@ def install_import_stubs():
     mt5.POSITION_TYPE_BUY = 0
     mt5.ORDER_TYPE_BUY = 0
     mt5.ORDER_TYPE_SELL = 1
+    mt5.ORDER_TYPE_BUY_LIMIT = 2
+    mt5.ORDER_TYPE_SELL_LIMIT = 3
+    mt5.ORDER_TYPE_BUY_STOP = 4
+    mt5.ORDER_TYPE_SELL_STOP = 5
     mt5.DEAL_ENTRY_OUT = 1
     mt5.DEAL_ENTRY_INOUT = 2
     mt5.DEAL_ENTRY_OUT_BY = 3
@@ -70,6 +74,7 @@ def install_import_stubs():
 install_import_stubs()
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 bridge = importlib.import_module("bridge")
+execution = importlib.import_module("execution")
 
 
 class BridgeTests(unittest.TestCase):
@@ -264,6 +269,19 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(backend_exception_message(RuntimeError("x" * 500)), f"RuntimeError: {'x' * 400}")
         self.assertEqual(backend_http_error_message({"error": "ORDER_CHECK_REJECTED", "hint": "Broker odrzucił sprawdzenie: 10016 · invalid stops"}),
                          "ORDER_CHECK_REJECTED: Broker odrzucił sprawdzenie: 10016 · invalid stops")
+
+
+class ExecutionOrderTypeTests(unittest.TestCase):
+    def test_pending_kinds_map_to_the_matching_mt5_order_type(self):
+        expected = {
+            "buy_limit": execution.mt5.ORDER_TYPE_BUY_LIMIT,
+            "buy_stop": execution.mt5.ORDER_TYPE_BUY_STOP,
+            "sell_limit": execution.mt5.ORDER_TYPE_SELL_LIMIT,
+            "sell_stop": execution.mt5.ORDER_TYPE_SELL_STOP,
+        }
+        for kind, order_type in expected.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(execution.pending_order_type(kind), order_type)
 
 
 if __name__ == "__main__":
