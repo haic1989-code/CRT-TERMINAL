@@ -2,7 +2,7 @@ import { bridgeFetch, resolveBridgeEndpoint } from './bridgeEndpoint'
 
 export type ExecutionState = 'PREPARED' | 'INTENT' | 'SUBMITTING' | 'ACKNOWLEDGED' | 'UNKNOWN' | 'REJECTED' | 'RECONCILED'
 export type ExecutionRecord = {
-  clientRequestId: string; state: ExecutionState; confirmationToken: string; expiresAt: number; kind: 'market' | 'buy_limit' | 'sell_limit' | 'pending'
+  clientRequestId: string; state: ExecutionState; confirmationToken: string; expiresAt: number; kind: 'market' | PendingExecutionKind | 'pending'
   account: { login: number; server: string; terminal: string }
   request: { symbol: string; volume: number; type: number; price: number; sl: number; tp: number; deviation: number }
   risk: { loss: number; riskPercent: number; margin: number; currency: string }
