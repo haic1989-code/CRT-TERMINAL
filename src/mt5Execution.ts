@@ -14,7 +14,7 @@ export type ExecutionQuote = { status: string; lastTickAt: number | null; bid?: 
 
 export function isFreshExecutionQuote(feed: ExecutionQuote, now = Date.now()): boolean {
   if (feed.status !== 'live' || !Number.isFinite(feed.lastTickAt) || feed.lastTickAt === null) return false
-  const age = now - feed.lastTickAt
+  const age = now - feed.lastTickAt * 1000
   return age >= -1000 && age <= 15000 && Number.isFinite(feed.bid) && Number.isFinite(feed.ask)
     && (feed.bid as number) > 0 && (feed.ask as number) >= (feed.bid as number)
 }
