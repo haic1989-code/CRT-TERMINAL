@@ -67,6 +67,10 @@ describe('pending order classification', () => {
     expect(classifyPendingOrder(side, entry, bid, ask)).toBe(kind)
   })
 
+  it('accepts a valid fresh live Bid/Ask timestamp stored in seconds', () => {
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid, ask }, 1_005_000)).toBe(true)
+  })
+
   it('fails closed at the quote, with invalid prices, or without a fresh live Bid/Ask', () => {
     expect(classifyPendingOrder('buy', ask, bid, ask)).toBeNull()
     expect(classifyPendingOrder('sell', bid, bid, ask)).toBeNull()
