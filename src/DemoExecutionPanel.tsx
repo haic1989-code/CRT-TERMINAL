@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MarketFeedState, PlannerSnapshot } from './MarketChart'
-import { executionStatus, prepareExecution, readExecution, sendExecution, unresolvedExecution, type ExecutionRecord, type ExecutionStatus } from './mt5Execution'
+import { executionStatus, isExecutionRequestNotFound, prepareExecution, readExecution, sendExecution, unresolvedExecution, type ExecutionRecord, type ExecutionStatus } from './mt5Execution'
 
 const STORAGE = 'crt-terminal:pending-execution:v1'
 const orderTypeLabels: Record<number, string> = { 0: 'BUY MARKET', 1: 'SELL MARKET', 2: 'BUY LIMIT', 3: 'SELL LIMIT', 4: 'BUY STOP', 5: 'SELL STOP', 6: 'BUY STOP LIMIT', 7: 'SELL STOP LIMIT' }
@@ -31,9 +31,22 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
         const value = await executionStatus()
         if (cancelled || !mounted.current) return
         setStatus(value)
-        const id = value.unresolved[0]?.clientRequestId || recoveryId.current
+        const serverRecoveryId = value.unresolved[0]?.clientRequestId
+        const localRecoveryId = recoveryId.current
+        const id = serverRecoveryId || localRecoveryId
         if (id) {
-          const result = await readExecution(id)
+          let result: ExecutionRecord
+          try { result = await readExecution(id) }
+          catch (error) {
+            const orphanedLocalPointer = !serverRecoveryId && localRecoveryId === id && isExecutionRequestNotFound(error)
+            if (!orphanedLocalPointer) throw error
+            recoveryId.current = null
+            try { if (localStorage.getItem(STORAGE) === id) localStorage.removeItem(STORAGE) } catch { /* server journal remains authoritative */ }
+            if (cancelled || !mounted.current) return
+            setRecord(null)
+            setShowNotice(false)
+            return
+          }
           if (cancelled) return
           if (mounted.current) { setRecord(result); setNotice(result.message) }
           if (!unresolvedExecution(result)) {

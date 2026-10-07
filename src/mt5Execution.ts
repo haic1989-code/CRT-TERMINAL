@@ -17,6 +17,29 @@ export type ExecutionPlan = {
 type ErrorPayload = { detail?: unknown; error?: unknown; hint?: unknown; message?: unknown }
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 
+export class ExecutionBackendError extends Error {
+  readonly status: number
+  readonly code?: string
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = 'ExecutionBackendError'
+    this.status = status
+    this.code = code
+  }
+}
+
+function executionBackendCode(payload: unknown): string | undefined {
+  const root = isObject(payload) ? payload as ErrorPayload : undefined
+  const detail = root && 'detail' in root ? root.detail : payload
+  if (isObject(detail) && typeof detail.error === 'string' && detail.error.trim()) return detail.error.trim()
+  if (root && typeof root.error === 'string' && root.error.trim()) return root.error.trim()
+  return undefined
+}
+
+export function isExecutionRequestNotFound(error: unknown): boolean {
+  return error instanceof ExecutionBackendError && error.status === 404 && error.code === 'REQUEST_NOT_FOUND'
+}
+
 /** Keep the bridge's actual diagnostic visible while retaining the HTTP status. */
 export function executionBackendError(payload: unknown, status: number): string {
   const root = isObject(payload) ? payload as ErrorPayload : undefined
@@ -70,7 +93,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     if (!response.ok) throw new Error(`Backend HTTP ${response.status}: odpowiedź nie zawiera poprawnego JSON.`)
     throw new Error('Odpowiedź mostu nie zawiera poprawnego JSON. Nie traktuję jej jako potwierdzenia zlecenia.')
   }
-  if (!response.ok) throw new Error(executionBackendError(data, response.status))
+  if (!response.ok) throw new ExecutionBackendError(executionBackendError(data, response.status), response.status, executionBackendCode(data))
   if (!isObject(data)) throw new Error('Odpowiedź mostu jest niekompletna. Nie potwierdzam wysyłki; sprawdźmy dziennik MT5.')
   const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
   const account = data.account

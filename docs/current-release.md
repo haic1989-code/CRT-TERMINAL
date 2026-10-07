@@ -1,3 +1,11 @@
+# CRT Terminal 0.1.43
+
+- Recovery no longer lets an orphaned browser-local pending-request ID block DEMO execution when the authoritative MT5 bridge status reports no unresolved request and that local-only ID returns HTTP 404 `REQUEST_NOT_FOUND`.
+- Only that exact local-only 404 is cleared. Any request ID reported by the server journal, any other backend error, or any uncertain send state remains fail-closed and is never resent automatically.
+- The structured execution error retains HTTP status and backend code so recovery decisions do not depend on parsing display text.
+- DEMO-only, owning desktop session, execution token, durable SQLite journal, idempotency, risk checks and one-shot send controls are unchanged.
+- Validation is delegated to CI before the signed updater release is published.
+
 # CRT Terminal 0.1.42
 
 - Execution confirmation now shows the bridge's HTTP status, backend error code and broker explanation instead of hiding them behind a generic handshake message.

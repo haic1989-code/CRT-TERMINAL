@@ -6,7 +6,7 @@ vi.mock('./bridgeEndpoint', () => ({
 }))
 
 import { bridgeFetch, resolveBridgeEndpoint } from './bridgeEndpoint'
-import { executionBackendError, executionStatus } from './mt5Execution'
+import { ExecutionBackendError, executionBackendError, executionStatus, isExecutionRequestNotFound, readExecution } from './mt5Execution'
 
 const endpoint = { url: 'http://127.0.0.1:54321', instance: 'instance-a', owner: 'owner-a', protocol_version: 5, execution_token: 'private-session-token' }
 
@@ -28,6 +28,16 @@ describe('execution handshake diagnostics', () => {
     vi.mocked(resolveBridgeEndpoint).mockResolvedValue(endpoint)
     vi.mocked(bridgeFetch).mockResolvedValue(new Response(JSON.stringify({ detail: { error: 'EXECUTION_TOKEN_INVALID', hint: 'Sesja mostu wygasła.' } }), { status: 403 }))
     await expect(executionStatus()).rejects.toThrow('Backend HTTP 403 · EXECUTION_TOKEN_INVALID: Sesja mostu wygasła.')
+  })
+
+  it('types a missing journal request so orphan recovery cannot rely on display-text parsing', async () => {
+    vi.mocked(resolveBridgeEndpoint).mockResolvedValue(endpoint)
+    vi.mocked(bridgeFetch).mockResolvedValue(new Response(JSON.stringify({ detail: { error: 'REQUEST_NOT_FOUND', hint: 'Nie znalazłam tego zlecenia w dzienniku. Niczego nie ponawiam.' } }), { status: 404 }))
+    const error = await readExecution('orphaned-local-id').catch(value => value)
+    expect(error).toBeInstanceOf(ExecutionBackendError)
+    expect(error).toMatchObject({ status: 404, code: 'REQUEST_NOT_FOUND' })
+    expect(isExecutionRequestNotFound(error)).toBe(true)
+    expect(isExecutionRequestNotFound(new ExecutionBackendError('other missing resource', 404, 'OTHER'))).toBe(false)
   })
 
   it('keeps a concrete bridge protocol failure instead of relabeling it as unavailable', async () => {
