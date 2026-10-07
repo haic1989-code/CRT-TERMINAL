@@ -271,10 +271,6 @@ class BridgeTests(unittest.TestCase):
                          "ORDER_CHECK_REJECTED: Broker odrzucił sprawdzenie: 10016 · invalid stops")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ExecutionOrderTypeTests(unittest.TestCase):
     def test_pending_kinds_map_to_the_matching_mt5_order_type(self):
         expected = {
@@ -286,3 +282,7 @@ class ExecutionOrderTypeTests(unittest.TestCase):
         for kind, order_type in expected.items():
             with self.subTest(kind=kind):
                 self.assertEqual(execution.pending_order_type(kind), order_type)
+
+
+if __name__ == "__main__":
+    unittest.main()
