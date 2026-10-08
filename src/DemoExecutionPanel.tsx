@@ -4,6 +4,8 @@ import { classifyPendingOrder, executionStatus, isExecutionRequestNotFound, prep
 
 const STORAGE = 'crt-terminal:pending-execution:v1'
 const orderLabels: Record<PendingExecutionKind, string> = { buy_limit: 'BUY LIMIT', buy_stop: 'BUY STOP', sell_limit: 'SELL LIMIT', sell_stop: 'SELL STOP' }
+const completionMessage = (record: ExecutionRecord) => record.kind in orderLabels
+  ? `${orderLabels[record.kind as PendingExecutionKind]} · ${record.message}` : record.message
 const message = (error: unknown) => error instanceof Error ? error.message : 'Nie mogę potwierdzić wyniku. Sprawdźmy go w MT5.'
 type Props = { feed: MarketFeedState; planner: PlannerSnapshot | null; volume: number | null; unsupportedManagement: boolean; confirmationOpen: boolean; onCancel: () => void; onComplete: (message: string) => void }
 /** A single explicit Luna confirmation runs the existing DEMO preflight and one-shot send path. */
@@ -59,7 +61,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
           if (!unresolvedExecution(result)) {
             recoveryId.current = null
             try { if (localStorage.getItem(STORAGE) === id) localStorage.removeItem(STORAGE) } catch { /* server journal remains authoritative */ }
-            if (result.state === 'RECONCILED') onComplete(result.message)
+            if (result.state === 'RECONCILED') onComplete(completionMessage(result))
           }
         } else setNotice(current => current === 'Sprawdzam uprawnienia konta DEMO…' ? 'Luna › Plan wyśle się dopiero po Twoim potwierdzeniu.' : current)
       } catch (error) { if (!cancelled && mounted.current) { setStatus(null); setNotice(message(error)); setShowNotice(true) } }
@@ -119,7 +121,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
       try { localStorage.removeItem(STORAGE) } catch { /* server result is already known */ }
     }
     try { setStatus(await executionStatus()) } catch { setStatus(null) }
-    if (result.state === 'RECONCILED') onComplete(result.message)
+    if (result.state === 'RECONCILED') onComplete(completionMessage(result))
   })
   const check = () => void run(async () => {
     const id = record?.clientRequestId || recoveryId.current
@@ -129,7 +131,7 @@ export function DemoExecutionPanel({ feed, planner, volume, unsupportedManagemen
     if (!unresolvedExecution(result)) {
       recoveryId.current = null
       try { localStorage.removeItem(STORAGE) } catch { /* server result is already known */ }
-      if (result.state === 'RECONCILED') onComplete(result.message)
+      if (result.state === 'RECONCILED') onComplete(completionMessage(result))
     }
     setStatus(await executionStatus())
   })
