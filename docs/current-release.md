@@ -1,3 +1,13 @@
+# CRT Terminal 0.1.46
+
+- Planner confirmation sends direction and levels. The authenticated owning MT5 backend reads one current tick per prepare/send preflight and determines BUY LIMIT, BUY STOP, SELL LIMIT or SELL STOP. Entry equal to the reference price fails closed.
+- The UI preview is advisory. Final MT5 classification replaces it in the panel and remains visible in Luna's completion message. Chart cache age, browser clock and chart session telemetry no longer duplicate backend execution decisions.
+- One shared backend freshness policy serves chart telemetry and execution: invalid/missing Bid/Ask or timestamp fails closed, and past tick age over 15 seconds is rejected. A broker timestamp ahead of Windows has age zero; the stale-age limit is unchanged.
+- DEMO-only, owning-session execution token, explicit confirmation, broker session/permission checks, exact symbol, volume/grid/stops, risk/margin checks, order_check, durable SQLite journal and idempotency are retained. INTENT and SUBMITTING are durably recorded before the sole order_send call. UNKNOWN results reconcile without automatic resend.
+- Full candidate CI passed: 134 JavaScript/TypeScript tests, 50 Python bridge tests, TypeScript/Vite build, Python syntax checks, dependency audit and 33 Playwright scenarios. All execution regressions use mocked MT5; no development trading requests are sent.
+- Signed Windows installer and updater publication require green CI for the release commit on main. Installed Windows/MT5 and in-app update acceptance remain NOT RUN.
+- FX Replay files and UI design are unchanged.
+
 # CRT Terminal 0.1.45
 
 - The bridge-provided `quote_age_ms` is the shared freshness source for the chart's live status and execution gate.
