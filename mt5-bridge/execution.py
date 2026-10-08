@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 import MetaTrader5 as mt5
 from fastapi import HTTPException
+from quotes import quote_metadata
 
 MAGIC = 20261003
 UNRESOLVED = ("INTENT", "SUBMITTING", "ACKNOWLEDGED", "UNKNOWN")
@@ -41,6 +42,15 @@ def number(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         deny("INVALID_NUMBER", "Potrzebuję poprawnych liczb w planie.", 400)
     return float(value)
+
+
+def classify_pending_order(side: str, entry: float, bid: float, ask: float) -> str:
+    reference = ask if side == "buy" else bid
+    if entry == reference:
+        deny("PENDING_AT_QUOTE", "Wejście jest równe aktualnemu Ask/Bid. Przesuń poziom i potwierdź plan ponownie.")
+    if side == "buy":
+        return "buy_limit" if entry < reference else "buy_stop"
+    return "sell_limit" if entry > reference else "sell_stop"
 
 
 def pending_order_type(kind: str) -> int:
@@ -137,7 +147,49 @@ class ExecutionService:
     def public(record):
         return {key: record.get(key) for key in ("clientRequestId", "state", "account", "kind", "request", "expiresAt", "confirmationToken", "risk", "result", "message")}
 
-    def guard(self, request, identity, *, quote_check: bool):
+    @staticmethod
+    def symbol_context(symbol):
+        info = required(mt5.symbol_info(symbol), "SYMBOL_UNAVAILABLE")
+        if info.name != symbol:
+            deny("SYMBOL_MISMATCH", "Nie będę zastępować symbolu innym instrumentem.")
+        if not mt5.symbol_select(symbol, True):
+            deny("SYMBOL_SELECT_FAILED", "MT5 nie udostępnił tego symbolu.")
+        if number(info.trade_tick_size) <= 0 or number(info.point) <= 0:
+            deny("SYMBOL_GRID_UNAVAILABLE", "Nie znam poprawnego kroku ceny tego instrumentu.")
+        return info
+
+    @staticmethod
+    def snap(value, info):
+        value = number(value)
+        if value <= 0:
+            deny("INVALID_PRICE", "Cena wejścia, SL i TP musi być dodatnia.")
+        return round(round(value / info.trade_tick_size) * info.trade_tick_size, info.digits)
+
+    def preflight(self, request, identity, side, *, preparing=False):
+        """Read one current tick, classify, validate, then check the exact send request."""
+        info = self.symbol_context(request["symbol"])
+        tick = mt5.symbol_info_tick(request["symbol"])
+        quote = quote_metadata(tick)
+        if quote["error"]:
+            deny(quote["error"], "Nie mam aktualnego, poprawnego notowania Bid/Ask z MT5.")
+        reference = float(tick.ask if side == "buy" else tick.bid)
+        if request["action"] == mt5.TRADE_ACTION_PENDING:
+            kind = classify_pending_order(side, request["price"], tick.bid, tick.ask)
+            request["type"] = pending_order_type(kind)
+        else:
+            kind = "market"
+            if not preparing and abs(reference - request["price"]) > request["deviation"] * info.point + info.trade_tick_size * .01:
+                deny("QUOTE_MOVED", "Cena uciekła poza wybrane odchylenie. Przygotuj nowe podsumowanie.")
+            request["price"] = self.snap(reference, info)
+        risk = self.guard(request, identity, info, tick)
+        check = required(mt5.order_check(request), "ORDER_CHECK_UNAVAILABLE")
+        if check.retcode != 0:
+            deny("ORDER_CHECK_REJECTED", f"Broker odrzucił sprawdzenie: {check.retcode} · {check.comment}")
+        if self.account()[1] != identity:
+            deny("ACCOUNT_CHANGED", "Konto zmieniło się podczas sprawdzania. Przygotuj nowy plan.")
+        return kind, risk
+
+    def guard(self, request, identity, info, tick):
         account, current, _ = self.account()
         if current != identity:
             deny("ACCOUNT_CHANGED", "Konto lub terminal się zmienił. Przygotuj plan w nowej sesji.")
@@ -148,16 +200,6 @@ class ExecutionService:
                 deny("MARKET_SESSION_UNKNOWN", "Nie potwierdziłam godzin sesji symbolu. Uruchom pomocnik CRTMarketSessions w MT5.")
             if session_open is False:
                 deny("MARKET_CLOSED", "Sesja handlowa symbolu jest zamknięta według grafiku brokera.")
-        info = required(mt5.symbol_info(symbol), "SYMBOL_UNAVAILABLE")
-        if info.name != symbol or not mt5.symbol_select(symbol, True):
-            deny("SYMBOL_MISMATCH", "Nie potwierdziłam dokładnego symbolu brokera.")
-        tick = required(mt5.symbol_info_tick(symbol), "QUOTE_UNAVAILABLE")
-        if not all(math.isfinite(number(value)) for value in (tick.bid, tick.ask)):
-            deny("QUOTE_UNAVAILABLE", "Nie mam poprawnego notowania Bid/Ask.")
-        timestamp = int(tick.time_msc or tick.time * 1000)
-        age = time.time() * 1000 - timestamp
-        if timestamp <= 0 or age < -1000 or age > 15000 or tick.bid <= 0 or tick.ask < tick.bid:
-            deny("STALE_QUOTE", "Notowanie nie jest aktualne. Poczekajmy na świeżą cenę.")
         volume = request["volume"]
         step = float(info.volume_step)
         if step <= 0 or not (0 < info.volume_min <= volume <= info.volume_max) or abs(Decimal(str(volume)) % Decimal(str(step))) > Decimal("0.00000001"):
@@ -174,8 +216,6 @@ class ExecutionService:
             deny("SYMBOL_TRADING_DISABLED", "Broker nie pozwala na ten kierunek transakcji.")
         pending = request["action"] == mt5.TRADE_ACTION_PENDING
         reference = float(tick.ask if buying else tick.bid)
-        if quote_check and not pending and abs(reference - request["price"]) > request["deviation"] * info.point + grid * .01:
-            deny("QUOTE_MOVED", "Cena uciekła poza wybrane odchylenie. Przygotuj nowe podsumowanie.")
         if pending:
             limit = request["type"] in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
             distance = reference - request["price"] if buying == limit else request["price"] - reference
@@ -226,76 +266,17 @@ class ExecutionService:
             deny("MARGIN_LIMIT", "Brakuje wolnego margin albo plan przekracza limit wykorzystania 60%.")
         if account.margin > 0 and (account.margin_level is None or account.margin_level <= 0 or not math.isfinite(account.margin_level)):
             deny("MARGIN_LEVEL_INVALID", "Nie mogę potwierdzić poziomu zabezpieczenia konta.")
-        if self.account()[1] != identity:
-            deny("ACCOUNT_CHANGED", "Konto zmieniło się podczas sprawdzania. Przygotuj nowy plan.")
         return {"loss": loss, "riskPercent": loss / equity * 100, "margin": margin, "currency": account.currency}
 
     def prepare(self, body):
-        account, identity, key = self.account()
+        _, identity, key = self.account()
         try:
             request_id = str(uuid.UUID(body["clientRequestId"]))
         except (ValueError, KeyError, TypeError, AttributeError):
             deny("REQUEST_ID_REQUIRED", "Potrzebuję unikalnego identyfikatora zlecenia.", 400)
         if body.get("accountLogin") != identity["login"] or body.get("accountServer") != identity["server"]:
             deny("ACCOUNT_CHANGED", "Podsumowanie dotyczy innego konta. Odśwież dane.")
-        symbol = body.get("symbol")
-        if not isinstance(symbol, str) or not symbol or len(symbol) > 64:
-            deny("INVALID_SYMBOL", "Wybierz dokładny symbol brokera.", 400)
-        info = required(mt5.symbol_info(symbol), "SYMBOL_UNAVAILABLE")
-        if info.name != symbol:
-            deny("SYMBOL_MISMATCH", "Nie będę zastępować symbolu innym instrumentem.")
-        if not mt5.symbol_select(symbol, True):
-            deny("SYMBOL_SELECT_FAILED", "MT5 nie udostępnił tego symbolu.")
-        tick = required(mt5.symbol_info_tick(symbol), "QUOTE_UNAVAILABLE")
-        side = body.get("side")
-        kind = body.get("kind")
-        if side not in ("buy", "sell") or kind not in ("market", "buy_limit", "buy_stop", "sell_limit", "sell_stop"):
-            deny("INVALID_KIND", "Wybierz pozycję rynkową albo poprawny typ Buy/Sell Limit/Stop.", 400)
-        buying = side == "buy"
-        if kind in ("buy_limit", "buy_stop") and not buying:
-            deny("ORDER_SIDE_MISMATCH", "Buy Limit/Stop wymaga planu DŁUGA.", 400)
-        if kind in ("sell_limit", "sell_stop") and buying:
-            deny("ORDER_SIDE_MISMATCH", "Sell Limit/Stop wymaga planu KRÓTKA.", 400)
-        price = float(tick.ask if buying else tick.bid) if kind == "market" else number(body.get("entry"))
-        deviation = body.get("deviationPoints")
-        if type(deviation) is not int or not 0 <= deviation <= 100:
-            deny("INVALID_DEVIATION", "Odchylenie ceny musi wynosić od 0 do 100 punktów.", 400)
-        if kind == "market" and abs(price - number(body.get("quote"))) > deviation * info.point + info.trade_tick_size * .01:
-            deny("QUOTE_MOVED", "Notowanie zmieniło się od odczytu w terminalu. Odśwież podsumowanie.")
-        if kind != "market":
-            if kind == "buy_limit" and price >= tick.ask:
-                deny("PENDING_PRICE_INVALID", "Buy Limit musi leżeć poniżej bieżącego Ask.")
-            if kind == "buy_stop" and price <= tick.ask:
-                deny("PENDING_PRICE_INVALID", "Buy Stop musi leżeć powyżej bieżącego Ask.")
-            if kind == "sell_limit" and price <= tick.bid:
-                deny("PENDING_PRICE_INVALID", "Sell Limit musi leżeć powyżej bieżącego Bid.")
-            if kind == "sell_stop" and price >= tick.bid:
-                deny("PENDING_PRICE_INVALID", "Sell Stop musi leżeć poniżej bieżącego Bid.")
-            order_type = pending_order_type(kind)
-            filling = mt5.ORDER_FILLING_RETURN
-        else:
-            order_type = mt5.ORDER_TYPE_BUY if buying else mt5.ORDER_TYPE_SELL
-            if info.trade_exemode in (mt5.SYMBOL_TRADE_EXECUTION_INSTANT, mt5.SYMBOL_TRADE_EXECUTION_REQUEST) or info.filling_mode & 1:
-                filling = mt5.ORDER_FILLING_FOK
-            elif info.filling_mode & 2:
-                filling = mt5.ORDER_FILLING_IOC
-            elif info.trade_exemode == mt5.SYMBOL_TRADE_EXECUTION_EXCHANGE:
-                filling = mt5.ORDER_FILLING_RETURN
-            else:
-                deny("FILLING_UNAVAILABLE", "Nie znalazłam obsługiwanej polityki wykonania. Nie będę próbować losowych ustawień.")
-        tag = "J:" + uuid.UUID(request_id).hex[:24]
-        grid = number(info.trade_tick_size)
-        if grid <= 0:
-            deny("SYMBOL_GRID_UNAVAILABLE", "Nie znam kroku ceny tego instrumentu.")
-        def snap(value):
-            value = number(value)
-            if value <= 0:
-                deny("INVALID_PRICE", "Cena wejścia, SL i TP musi być dodatnia.")
-            return round(round(value / grid) * grid, info.digits)
-        request = {"action": mt5.TRADE_ACTION_DEAL if kind == "market" else mt5.TRADE_ACTION_PENDING,
-                   "symbol": symbol, "volume": number(body.get("volume")), "type": order_type, "price": snap(price),
-                   "sl": snap(body.get("sl")), "tp": snap(body.get("tp")), "deviation": deviation,
-                   "magic": MAGIC, "comment": tag, "type_time": mt5.ORDER_TIME_GTC, "type_filling": filling}
+        # Consult durable idempotency before looking at a newer tick.
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, allow_nan=False).encode()).hexdigest()
         with self.journal() as db:
             existing = db.execute("SELECT record FROM requests WHERE id=?", (request_id,)).fetchone()
@@ -304,18 +285,51 @@ class ExecutionService:
                 if record["fingerprint"] != fingerprint or record["account"] != identity:
                     deny("REQUEST_CONFLICT", "Ten identyfikator był już użyty dla innego planu.")
                 return self.public(record)
-        risk = self.guard(request, identity, quote_check=True)
-        check = required(mt5.order_check(request), "ORDER_CHECK_UNAVAILABLE")
-        if check.retcode != 0:
-            deny("ORDER_CHECK_REJECTED", f"Broker nie zaakceptował sprawdzenia: {check.retcode} · {check.comment}")
-        if self.account()[1] != identity:
-            deny("ACCOUNT_CHANGED", "Konto zmieniło się podczas sprawdzania. Przygotuj nowy plan.")
+        symbol = body.get("symbol")
+        if not isinstance(symbol, str) or not symbol or len(symbol) > 64:
+            deny("INVALID_SYMBOL", "Wybierz dokładny symbol brokera.", 400)
+        side, preview = body.get("side"), body.get("kind")
+        if side not in ("buy", "sell") or preview not in ("pending", "market", "buy_limit", "buy_stop", "sell_limit", "sell_stop"):
+            deny("INVALID_KIND", "Wybierz kierunek planu i zlecenie oczekujące albo rynkowe.", 400)
+        pending = preview != "market"
+        info = self.symbol_context(symbol)
+        buying = side == "buy"
+        deviation = body.get("deviationPoints")
+        if type(deviation) is not int or not 0 <= deviation <= 100:
+            deny("INVALID_DEVIATION", "Odchylenie ceny musi wynosić od 0 do 100 punktów.", 400)
+        if pending:
+            filling = mt5.ORDER_FILLING_RETURN
+        elif info.trade_exemode in (mt5.SYMBOL_TRADE_EXECUTION_INSTANT, mt5.SYMBOL_TRADE_EXECUTION_REQUEST) or info.filling_mode & 1:
+            filling = mt5.ORDER_FILLING_FOK
+        elif info.filling_mode & 2:
+            filling = mt5.ORDER_FILLING_IOC
+        elif info.trade_exemode == mt5.SYMBOL_TRADE_EXECUTION_EXCHANGE:
+            filling = mt5.ORDER_FILLING_RETURN
+        else:
+            deny("FILLING_UNAVAILABLE", "Nie znalazłam obsługiwanej polityki wykonania.")
+        request = {"action": mt5.TRADE_ACTION_PENDING if pending else mt5.TRADE_ACTION_DEAL,
+                   "symbol": symbol, "volume": number(body.get("volume")),
+                   "type": mt5.ORDER_TYPE_BUY if buying else mt5.ORDER_TYPE_SELL,
+                   "price": self.snap(body.get("entry"), info), "sl": self.snap(body.get("sl"), info),
+                   "tp": self.snap(body.get("tp"), info), "deviation": deviation,
+                   "magic": MAGIC, "comment": "J:" + uuid.UUID(request_id).hex[:24],
+                   "type_time": mt5.ORDER_TIME_GTC, "type_filling": filling}
+        kind, risk = self.preflight(request, identity, side, preparing=True)
         record = {"clientRequestId": request_id, "fingerprint": fingerprint, "account": identity,
-                  "state": "PREPARED", "kind": kind, "request": request, "risk": risk,
+                  "state": "PREPARED", "side": side, "kind": kind, "request": request, "risk": risk,
                   "expiresAt": int(time.time() * 1000) + 20000, "createdAt": time.time(),
-                  "confirmationToken": secrets.token_urlsafe(24), "message": "Sprawdziłam plan. Przejrzyj podsumowanie przed wysyłką."}
+                  "confirmationToken": secrets.token_urlsafe(24),
+                  "message": f"MT5: {kind.upper().replace('_', ' ')}. Sprawdziłam plan przed wysyłką."}
         with self.journal() as db:
             db.execute("BEGIN IMMEDIATE")
+            # A second bridge can prepare the same ID while this preflight runs.
+            existing = db.execute("SELECT record FROM requests WHERE id=?", (request_id,)).fetchone()
+            if existing:
+                saved = json.loads(existing[0])
+                if saved["fingerprint"] != fingerprint or saved["account"] != identity:
+                    deny("REQUEST_CONFLICT", "Ten identyfikator był już użyty dla innego planu.")
+                db.execute("COMMIT")
+                return self.public(saved)
             if db.execute("SELECT id FROM requests WHERE account_key=? AND state IN (?,?,?,?)", (key, *UNRESOLVED)).fetchone():
                 deny("UNRESOLVED_REQUEST", "Poprzednia wysyłka nie jest jeszcze uzgodniona. Najpierw sprawdźmy jej wynik.")
             db.execute("INSERT INTO requests VALUES (?,?,?,?)", (request_id, key, record["state"], json.dumps(record, allow_nan=False)))
@@ -355,12 +369,10 @@ class ExecutionService:
             db.execute("COMMIT")
         request = record["request"]
         try:
-            record["risk"] = self.guard(request, identity, quote_check=True)
-            check = required(mt5.order_check(request), "ORDER_CHECK_UNAVAILABLE")
-            if check.retcode != 0:
-                deny("ORDER_CHECK_REJECTED", f"Broker odrzucił sprawdzenie: {check.retcode} · {check.comment}")
-            self.guard(request, identity, quote_check=True)
-            # This exact normalized dictionary is used for both broker calls.
+            side = record.get("side") or ("buy" if request["type"] in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP) else "sell")
+            record["kind"], record["risk"] = self.preflight(request, identity, side)
+            # No reclassification or second tick gate after order_check.
+            # This exact normalized dictionary is saved and sent once.
         except HTTPException as error:
             record.update(state="REJECTED", message=backend_http_error_message(error.detail))
             with self.journal() as db:
@@ -384,7 +396,7 @@ class ExecutionService:
                 accepted = result.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL, mt5.TRADE_RETCODE_PLACED)
                 uncertain = result.retcode not in DEFINITE_REJECTIONS or result.order > 0 or result.deal > 0
                 record["state"] = "ACKNOWLEDGED" if accepted else "UNKNOWN" if uncertain else "REJECTED"
-                record["message"] = ("Broker przyjął żądanie. Uzgadniam jego wynik." if accepted else "Wynik jest niejednoznaczny. Nie wyślę tego zlecenia ponownie." if uncertain else f"Broker odrzucił zlecenie: {result.retcode} · {result.comment}")
+                record["message"] = (f"MT5: {record['kind'].upper().replace('_', ' ')}. Broker przyjął żądanie. Uzgadniam jego wynik." if accepted else "Wynik jest niejednoznaczny. Nie wyślę tego zlecenia ponownie." if uncertain else f"Broker odrzucił zlecenie: {result.retcode} · {result.comment}")
         except Exception as error:
             record.update(state="UNKNOWN", message=f"Wysyłka MT5 zwróciła błąd ({backend_exception_message(error)}). Wynik jest niepewny; sprawdzę dziennik bez ponowienia zlecenia.")
         with self.journal() as db:

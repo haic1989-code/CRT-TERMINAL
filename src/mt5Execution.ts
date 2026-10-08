@@ -10,22 +10,7 @@ export type ExecutionRecord = {
 }
 export type ExecutionStatus = { mode: 'DEMO_ONLY'; enabled: boolean; reason?: string; account: ExecutionRecord['account']; unresolved: Array<{ clientRequestId: string; state: ExecutionState }> }
 export type PendingExecutionKind = 'buy_limit' | 'buy_stop' | 'sell_limit' | 'sell_stop'
-export type ExecutionQuote = { status: string; lastTickAt: number | null; quoteAgeMs?: number; bid?: number; ask?: number }
-
-export function isFreshExecutionQuote(feed: ExecutionQuote, now = Date.now()): boolean {
-  if (feed.status !== 'live') return false
-  const age = feed.quoteAgeMs === undefined
-    ? Number.isFinite(feed.lastTickAt) && feed.lastTickAt !== null
-      ? now - feed.lastTickAt * 1000
-      : Number.NaN
-    : feed.quoteAgeMs
-  const fresh = feed.quoteAgeMs === undefined
-    ? age >= -1000 && age <= 15000
-    : Number.isFinite(age) && age >= 0 && age <= 15000
-  return fresh && Number.isFinite(feed.bid) && Number.isFinite(feed.ask)
-    && (feed.bid as number) > 0 && (feed.ask as number) >= (feed.bid as number)
-}
-
+/** Display preview only. MT5 preflight owns the final type and freshness decision. */
 export function classifyPendingOrder(side: 'buy' | 'sell', entry: number, bid: number, ask: number): PendingExecutionKind | null {
   if (![entry, bid, ask].every(Number.isFinite) || bid <= 0 || ask < bid) return null
   if (side === 'buy') return entry < ask ? 'buy_limit' : entry > ask ? 'buy_stop' : null
@@ -34,7 +19,7 @@ export function classifyPendingOrder(side: 'buy' | 'sell', entry: number, bid: n
 
 export type ExecutionPlan = {
   clientRequestId: string; accountLogin: number; accountServer: string; symbol: string; side: 'buy' | 'sell'
-  kind: 'market' | PendingExecutionKind; volume: number; entry: number; sl: number; tp: number; quote: number; deviationPoints: number
+  kind: 'market' | 'pending'; volume: number; entry: number; sl: number; tp: number; deviationPoints: number
 }
 
 type ErrorPayload = { detail?: unknown; error?: unknown; hint?: unknown; message?: unknown }

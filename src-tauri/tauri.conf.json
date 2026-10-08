@@ -43,6 +43,7 @@
       "../mt5-bridge/replay_worker.py": "mt5-bridge/replay_worker.py",
       "../mt5-bridge/replay_finance.py": "mt5-bridge/replay_finance.py",
       "../mt5-bridge/execution.py": "mt5-bridge/execution.py",
+      "../mt5-bridge/quotes.py": "mt5-bridge/quotes.py",
       "../mt5-bridge/CRTMarketSessions.mq5": "mt5-bridge/CRTMarketSessions.mq5",
       "../mt5-bridge/requirements.txt": "mt5-bridge/requirements.txt",
       "../mt5-bridge/wheelhouse/": "mt5-bridge/wheelhouse/"

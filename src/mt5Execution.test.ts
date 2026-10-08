@@ -6,7 +6,7 @@ vi.mock('./bridgeEndpoint', () => ({
 }))
 
 import { bridgeFetch, resolveBridgeEndpoint } from './bridgeEndpoint'
-import { classifyPendingOrder, ExecutionBackendError, executionBackendError, executionStatus, isExecutionRequestNotFound, isFreshExecutionQuote, readExecution } from './mt5Execution'
+import { classifyPendingOrder, ExecutionBackendError, executionBackendError, executionStatus, isExecutionRequestNotFound, prepareExecution, readExecution, sendExecution } from './mt5Execution'
 
 const endpoint = { url: 'http://127.0.0.1:54321', instance: 'instance-a', owner: 'owner-a', protocol_version: 5, execution_token: 'private-session-token' }
 
@@ -67,29 +67,44 @@ describe('pending order classification', () => {
     expect(classifyPendingOrder(side, entry, bid, ask)).toBe(kind)
   })
 
-  it('uses bridge quote age even when the local clock differs from the tick timestamp', () => {
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1, quoteAgeMs: 14999, bid, ask }, 9_000_000)).toBe(true)
-  })
-
-  it('rejects bridge quotes older than 15 seconds', () => {
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 15001, bid, ask }, 1_000_000)).toBe(false)
-  })
-
-  it('falls back to the timestamp only when quote age is absent', () => {
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid, ask }, 1_005_000)).toBe(true)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid, ask }, 1_015_001)).toBe(false)
-  })
-
-  it('fails closed at the quote, with invalid prices, or without a fresh live Bid/Ask', () => {
+  it('keeps the preview unavailable for an equal or invalid price without authorizing execution', () => {
     expect(classifyPendingOrder('buy', ask, bid, ask)).toBeNull()
     expect(classifyPendingOrder('sell', bid, bid, ask)).toBeNull()
     expect(classifyPendingOrder('buy', Number.NaN, bid, ask)).toBeNull()
-    expect(isFreshExecutionQuote({ status: 'stale', lastTickAt: 1000, bid, ask }, 1_000_000)).toBe(false)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 984, bid, ask }, 1_000_000)).toBe(false)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid: undefined, ask }, 1_000_000)).toBe(false)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid: Number.NaN, ask }, 1_000_000)).toBe(false)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid: 0, ask }, 1_000_000)).toBe(false)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid, ask: bid - 1 }, 1_000_000)).toBe(false)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1002, bid, ask }, 1_000_000)).toBe(false)
+    expect(classifyPendingOrder('buy', 100, 0, ask)).toBeNull()
+    expect(classifyPendingOrder('sell', 100, bid, bid - 1)).toBeNull()
+  })
+})
+
+describe('backend execution authority', () => {
+  const account = { login: 1, server: 'Demo', terminal: 'MT5' }
+  const record = { clientRequestId: 'request-a', state: 'PREPARED', kind: 'buy_stop', account,
+    confirmationToken: 'confirmed-plan', expiresAt: 1,
+    request: { symbol: 'XAUUSD', volume: .01, type: 4, price: 101.5, sl: 100, tp: 103, deviation: 20 },
+    risk: { loss: 1, riskPercent: .01, margin: 1, currency: 'USD' }, message: 'BUY STOP' }
+
+  it('submits pending intent without a client quote, clock or final type and returns the backend type', async () => {
+    vi.mocked(resolveBridgeEndpoint).mockResolvedValue(endpoint)
+    vi.mocked(bridgeFetch).mockResolvedValue(new Response(JSON.stringify(record)))
+    const plan = { clientRequestId: 'request-a', accountLogin: 1, accountServer: 'Demo', symbol: 'XAUUSD',
+      side: 'buy' as const, kind: 'pending' as const, volume: .01, entry: 101.5, sl: 100, tp: 103, deviationPoints: 20 }
+    const prepared = await prepareExecution(plan)
+    expect(prepared.kind).toBe('buy_stop')
+    expect(JSON.parse(String(vi.mocked(bridgeFetch).mock.calls[0][1]?.body))).toEqual(plan)
+    expect(vi.mocked(bridgeFetch).mock.calls[0][1]?.headers).toMatchObject({ 'X-CRT-Execution': endpoint.execution_token })
+    vi.mocked(bridgeFetch).mockResolvedValue(new Response(JSON.stringify({ ...record, kind: 'buy_limit', state: 'RECONCILED' })))
+    const result = await sendExecution(prepared)
+    expect(result.kind).toBe('buy_limit')
+    expect(JSON.parse(String(vi.mocked(bridgeFetch).mock.calls[1][1]?.body))).toEqual({
+      clientRequestId: prepared.clientRequestId, confirmationToken: prepared.confirmationToken,
+    })
+  })
+
+  it('rejects an unowned or unauthenticated bridge before issuing any execution request', async () => {
+    for (const invalid of [{ ...endpoint, owner: 'manual' }, { ...endpoint, execution_token: '' }]) {
+      vi.mocked(resolveBridgeEndpoint).mockResolvedValue(invalid)
+      await expect(executionStatus()).rejects.toThrow('własnego mostu MT5')
+    }
+    expect(bridgeFetch).not.toHaveBeenCalled()
   })
 })

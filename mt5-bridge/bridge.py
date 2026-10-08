@@ -21,6 +21,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from execution import ExecutionService
+from quotes import quote_metadata
 import replay_store
 import replay_finance
 
@@ -441,8 +442,7 @@ def _tick_payload(symbol: str) -> dict[str, Any]:
     last = float(tick.last)
     mid = (bid + ask) / 2 if bid > 0 and ask > 0 else (last if last > 0 else bid or ask)
 
-    observed_at = int(datetime.now(timezone.utc).timestamp() * 1000)
-    age_ms = max(0, observed_at - int(tick.time_msc or tick.time * 1000))
+    quote = quote_metadata(tick)
     return {
         "symbol": symbol,
         "time": int(tick.time),
@@ -454,9 +454,9 @@ def _tick_payload(symbol: str) -> dict[str, Any]:
         "volume": float(tick.volume),
         "volume_real": float(tick.volume_real),
         "flags": int(tick.flags),
-        "observed_at": observed_at,
-        "quote_age_ms": age_ms,
-        "freshness": "fresh" if age_ms <= 15000 else "stale",
+        "observed_at": quote["observed_at"],
+        "quote_age_ms": quote["quote_age_ms"],
+        "freshness": quote["freshness"],
     }
 
 

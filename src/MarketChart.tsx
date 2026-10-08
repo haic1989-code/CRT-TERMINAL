@@ -8,7 +8,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { createMarketChart } from './chart/createMarketChart'
-import { fetchMt5Bars, type Mt5Account, type Mt5MarketSession, type Mt5SymbolInfo } from './mt5Client'
+import { fetchMt5Bars, type Mt5Account, type Mt5MarketSession, type Mt5SymbolInfo, type Mt5Tick } from './mt5Client'
 import { useChartIndicators, type IndicatorSeriesEntry } from './hooks/useChartIndicators'
 import { useChartDrawingInteractions } from './hooks/useChartDrawingInteractions'
 import { useChartPlannerInteractions } from './hooks/useChartPlannerInteractions'
@@ -49,6 +49,7 @@ export type MarketFeedState = {
   source: 'MT5'
   mode: 'local'
   lastTickAt: number | null
+  /** Backend display telemetry only; execution reads its own tick from MT5. */
   quoteAgeMs?: number
   symbol?: string
   account?: Mt5Account
@@ -147,9 +148,12 @@ function feedLabel(feed: MarketFeedState) {
   return 'MT5 · ŁĄCZENIE'
 }
 
-function feedStatusForQuote(quoteAgeMs: number, session: Mt5MarketSession): MarketFeedStatus {
+function feedStatusForQuote(tick: Mt5Tick, session: Mt5MarketSession): MarketFeedStatus {
   if (session.available && session.quote_open === false) return 'closed'
-  return quoteAgeMs <= 15000 ? 'live' : quoteAgeMs <= 120000 ? 'history' : 'stale'
+  if (tick.freshness === 'fresh') return 'live'
+  // History/stale are chart presentation states, never execution permissions.
+  return typeof tick.quote_age_ms === 'number' && Number.isFinite(tick.quote_age_ms)
+    && tick.quote_age_ms >= 0 && tick.quote_age_ms <= 120000 ? 'history' : 'stale'
 }
 
 export function MarketChart({
@@ -560,12 +564,8 @@ export function MarketChart({
 
         const newest = candles[candles.length - 1]
         const tickTimeMs = payload.tick.time_msc || payload.tick.time * 1000
-        const quoteAgeMs = payload.tick.quote_age_ms === undefined
-          ? Math.max(0, Date.now() - tickTimeMs)
-          : payload.tick.quote_age_ms
-        const status = Number.isFinite(quoteAgeMs) && quoteAgeMs >= 0
-          ? feedStatusForQuote(quoteAgeMs, payload.market_session)
-          : 'stale'
+        const quoteAgeMs = payload.tick.quote_age_ms
+        const status = feedStatusForQuote(payload.tick, payload.market_session)
 
         liveHistoryRef.current = candles
         setData(candles)
@@ -887,8 +887,8 @@ export function MarketChart({
 
         const tick = payload.tick
         const tickTimeMs = tick.time_msc || tick.time * 1000
-        const quoteAgeMs = Math.max(0, Date.now() - tickTimeMs)
-        const status = feedStatusForQuote(quoteAgeMs, payload.market_session)
+        const quoteAgeMs = tick.quote_age_ms
+        const status = feedStatusForQuote(tick, payload.market_session)
 
         // Native MT5 bars are authoritative, including current-bar extrema.
         const merged = new Map(liveHistoryRef.current.map(bar => [Number(bar.time), bar]))
