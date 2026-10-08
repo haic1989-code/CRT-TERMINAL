@@ -738,6 +738,21 @@ def positions():
         } for p in values]}
 
 
+@app.get("/v1/positions/live")
+def positions_live():
+    """Lightweight live position snapshot for responsive floating P/L updates."""
+    with _lock:
+        _ensure_connected()
+        values = _required(mt5.positions_get(), "POSITIONS_UNAVAILABLE")
+        _ensure_connected()
+        return {"observed_at": int(datetime.now(timezone.utc).timestamp() * 1000), "values": [{
+            "ticket": int(p.ticket), "symbol": p.symbol,
+            "type": "buy" if int(p.type) == mt5.POSITION_TYPE_BUY else "sell",
+            "volume": float(p.volume), "price_open": float(p.price_open), "sl": float(p.sl), "tp": float(p.tp),
+            "profit": float(p.profit), "swap": float(p.swap), "time": int(p.time),
+        } for p in values]}
+
+
 @app.get("/v1/orders")
 def orders():
     with _lock:
