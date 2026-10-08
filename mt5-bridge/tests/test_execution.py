@@ -84,6 +84,7 @@ class ExecutionPipelineTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 # A definite mocked rejection releases the account for the next case.
                 self.methods["order_send"].return_value.retcode = 10015
+                self.methods["order_send"].return_value.order = 0
                 prepared = self.service.prepare(self.plan(side, entry))
                 self.assertEqual(prepared["kind"], kind)
                 self.assertEqual(prepared["request"]["type"], order_type)
@@ -94,6 +95,7 @@ class ExecutionPipelineTests(unittest.TestCase):
                 self.methods["order_check"].side_effect = lambda req: checked.append(copy.deepcopy(req)) or types.SimpleNamespace(retcode=0)
                 result = self.service.execute(self.send_body(prepared))
                 self.assertEqual(result["kind"], kind)
+                self.assertEqual(result["state"], "REJECTED")
                 self.methods["symbol_info_tick"].assert_called_once_with("XAUUSD.a")
                 self.methods["order_check"].assert_called_once()
                 self.methods["order_send"].assert_called_once()
