@@ -67,8 +67,17 @@ describe('pending order classification', () => {
     expect(classifyPendingOrder(side, entry, bid, ask)).toBe(kind)
   })
 
-  it('accepts a valid fresh live Bid/Ask timestamp stored in seconds', () => {
+  it('uses bridge quote age even when the local clock differs from the tick timestamp', () => {
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1, quoteAgeMs: 14999, bid, ask }, 9_000_000)).toBe(true)
+  })
+
+  it('rejects bridge quotes older than 15 seconds', () => {
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 15001, bid, ask }, 1_000_000)).toBe(false)
+  })
+
+  it('falls back to the timestamp only when quote age is absent', () => {
     expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid, ask }, 1_005_000)).toBe(true)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid, ask }, 1_015_001)).toBe(false)
   })
 
   it('fails closed at the quote, with invalid prices, or without a fresh live Bid/Ask', () => {
@@ -77,7 +86,10 @@ describe('pending order classification', () => {
     expect(classifyPendingOrder('buy', Number.NaN, bid, ask)).toBeNull()
     expect(isFreshExecutionQuote({ status: 'stale', lastTickAt: 1000, bid, ask }, 1_000_000)).toBe(false)
     expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 984, bid, ask }, 1_000_000)).toBe(false)
-    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, bid: undefined, ask }, 1_000_000)).toBe(false)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid: undefined, ask }, 1_000_000)).toBe(false)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid: Number.NaN, ask }, 1_000_000)).toBe(false)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid: 0, ask }, 1_000_000)).toBe(false)
+    expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1000, quoteAgeMs: 0, bid, ask: bid - 1 }, 1_000_000)).toBe(false)
     expect(isFreshExecutionQuote({ status: 'live', lastTickAt: 1002, bid, ask }, 1_000_000)).toBe(false)
   })
 })

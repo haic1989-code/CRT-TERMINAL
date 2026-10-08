@@ -49,6 +49,7 @@ export type MarketFeedState = {
   source: 'MT5'
   mode: 'local'
   lastTickAt: number | null
+  quoteAgeMs?: number
   symbol?: string
   account?: Mt5Account
   symbolInfo?: Mt5SymbolInfo
@@ -559,8 +560,12 @@ export function MarketChart({
 
         const newest = candles[candles.length - 1]
         const tickTimeMs = payload.tick.time_msc || payload.tick.time * 1000
-        const quoteAgeMs = Math.max(0, Date.now() - tickTimeMs)
-        const status = feedStatusForQuote(quoteAgeMs, payload.market_session)
+        const quoteAgeMs = payload.tick.quote_age_ms === undefined
+          ? Math.max(0, Date.now() - tickTimeMs)
+          : payload.tick.quote_age_ms
+        const status = Number.isFinite(quoteAgeMs) && quoteAgeMs >= 0
+          ? feedStatusForQuote(quoteAgeMs, payload.market_session)
+          : 'stale'
 
         liveHistoryRef.current = candles
         setData(candles)
@@ -573,6 +578,7 @@ export function MarketChart({
           source: 'MT5',
           mode: 'local',
           lastTickAt: Math.floor(tickTimeMs / 1000),
+          quoteAgeMs,
           symbol: payload.symbol,
           account: payload.account,
           symbolInfo: payload.symbol_info,
@@ -911,6 +917,7 @@ export function MarketChart({
           source: 'MT5',
           mode: 'local',
           lastTickAt: Math.floor(tickTimeMs / 1000),
+          quoteAgeMs,
           symbol: payload.symbol,
           account: payload.account,
           symbolInfo: payload.symbol_info,
