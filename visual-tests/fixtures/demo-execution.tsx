@@ -10,9 +10,10 @@ const entry = Number(query.get('entry') || 100)
 const account = { login: 1, server: 'Demo', name: 'Fixture', company: 'Fixture', currency: 'USD',
   leverage: 100, balance: 10000, equity: 10000, profit: 0, margin: 0, margin_free: 10000,
   margin_level: null, trade_allowed: true, trade_expert: true, margin_mode: 0, trade_mode: 0 }
-const feed: MarketFeedState = { source: 'MT5', mode: 'local', status: 'stale',
+const feed: MarketFeedState = { source: 'MT5', mode: 'local', status: query.has('feedError') ? 'error' : 'stale',
   lastTickAt: 1, quoteAgeMs: 9000000, symbol: 'XAUUSD.a',
-  account: query.has('noAccount') ? undefined : account, bid: 99.5, ask: 100.5,
+  account: query.has('noAccount') ? undefined : account,
+  bid: query.has('noQuote') ? undefined : 99.5, ask: query.has('noQuote') ? undefined : 100.5,
   marketSession: { available: false, quote_open: null, trade_open: null, state: 'unknown' } }
 
 function Harness() {

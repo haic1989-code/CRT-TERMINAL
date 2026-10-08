@@ -147,3 +147,12 @@ test('an unowned bridge stays blocked', async ({ page }) => {
   await expect(page.locator('.luna-trade-confirm')).toContainText('własnego mostu MT5')
   expect(count(calls, '/prepare')).toBe(0)
 })
+
+test('an authorized backend supplies a tick even when the chart cache has no quote', async ({ page }) => {
+  const calls = await fixture(page, { query: '&noQuote&feedError', kind: 'buy_stop' })
+  await expect(page.locator('.execution-review strong')).toContainText('TYP USTALI MT5')
+  await expect(send(page)).toBeEnabled()
+  await send(page).click()
+  await expect(page.getByLabel('Wynik')).toContainText('BUY STOP')
+  expect(count(calls, '/execute')).toBe(1)
+})
