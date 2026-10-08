@@ -10,12 +10,19 @@ export type ExecutionRecord = {
 }
 export type ExecutionStatus = { mode: 'DEMO_ONLY'; enabled: boolean; reason?: string; account: ExecutionRecord['account']; unresolved: Array<{ clientRequestId: string; state: ExecutionState }> }
 export type PendingExecutionKind = 'buy_limit' | 'buy_stop' | 'sell_limit' | 'sell_stop'
-export type ExecutionQuote = { status: string; lastTickAt: number | null; bid?: number; ask?: number }
+export type ExecutionQuote = { status: string; lastTickAt: number | null; quoteAgeMs?: number; bid?: number; ask?: number }
 
 export function isFreshExecutionQuote(feed: ExecutionQuote, now = Date.now()): boolean {
-  if (feed.status !== 'live' || !Number.isFinite(feed.lastTickAt) || feed.lastTickAt === null) return false
-  const age = now - feed.lastTickAt * 1000
-  return age >= -1000 && age <= 15000 && Number.isFinite(feed.bid) && Number.isFinite(feed.ask)
+  if (feed.status !== 'live') return false
+  const age = feed.quoteAgeMs === undefined
+    ? Number.isFinite(feed.lastTickAt) && feed.lastTickAt !== null
+      ? now - feed.lastTickAt * 1000
+      : Number.NaN
+    : feed.quoteAgeMs
+  const fresh = feed.quoteAgeMs === undefined
+    ? age >= -1000 && age <= 15000
+    : Number.isFinite(age) && age >= 0 && age <= 15000
+  return fresh && Number.isFinite(feed.bid) && Number.isFinite(feed.ask)
     && (feed.bid as number) > 0 && (feed.ask as number) >= (feed.bid as number)
 }
 
