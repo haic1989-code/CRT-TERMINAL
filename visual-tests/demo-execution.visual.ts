@@ -46,7 +46,10 @@ async function fixture(page: Page, scenario: Scenario = {}) {
     }
     if (path.endsWith('/execute')) {
       expect(body).toEqual({ clientRequestId: record?.clientRequestId, confirmationToken: 'mock-confirmation' })
-      record = { ...record, kind: scenario.finalKind || record?.kind,
+      const finalKind = scenario.finalKind || String(record?.kind)
+      const finalTypes: Record<string, number> = { buy_limit: 2, sell_limit: 3, buy_stop: 4, sell_stop: 5 }
+      record = { ...record, kind: finalKind,
+        request: { ...(record?.request as Record<string, unknown>), type: finalTypes[finalKind] },
         state: scenario.uncertain ? 'UNKNOWN' : 'RECONCILED',
         message: scenario.uncertain ? 'Nie ponawiam wysyłki.' : 'Uzgodniono wynik.' }
       return reply(record)
@@ -137,7 +140,8 @@ for (const rejection of ['STALE_QUOTE', 'QUOTE_UNAVAILABLE', 'QUOTE_INVALID', 'P
 for (const query of ['&noPlanner', '&noVolume', '&noAccount']) {
   test(query + ': missing required input stays blocked', async ({ page }) => {
     const calls = await fixture(page, { query })
-    await expect(send(page)).toBeDisabled()
+    if (query === '&noPlanner') await expect(send(page)).toHaveCount(0)
+    else await expect(send(page)).toBeDisabled()
     expect(count(calls, '/prepare')).toBe(0)
   })
 }

@@ -92,7 +92,7 @@ describe('backend execution authority', () => {
     expect(prepared.kind).toBe('buy_stop')
     expect(JSON.parse(String(vi.mocked(bridgeFetch).mock.calls[0][1]?.body))).toEqual(plan)
     expect(vi.mocked(bridgeFetch).mock.calls[0][1]?.headers).toMatchObject({ 'X-CRT-Execution': endpoint.execution_token })
-    vi.mocked(bridgeFetch).mockResolvedValue(new Response(JSON.stringify({ ...record, kind: 'buy_limit', state: 'RECONCILED' })))
+    vi.mocked(bridgeFetch).mockResolvedValue(new Response(JSON.stringify({ ...record, kind: 'buy_limit', request: { ...record.request, type: 2 }, state: 'RECONCILED' })))
     const result = await sendExecution(prepared)
     expect(result.kind).toBe('buy_limit')
     expect(JSON.parse(String(vi.mocked(bridgeFetch).mock.calls[1][1]?.body))).toEqual({
