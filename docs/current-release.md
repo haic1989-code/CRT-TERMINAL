@@ -1,3 +1,16 @@
+# CRT Terminal 0.1.45
+
+- The bridge-provided `quote_age_ms` is the shared freshness source for the chart's live status and execution gate.
+- Execution still requires a live quote no older than 15 seconds and valid positive Bid/Ask values with Ask at or above Bid. Invalid age data fails closed.
+- A bounded timestamp calculation is used only when `quote_age_ms` is absent. The gate no longer derives safety from the truncated `lastTickAt` when bridge age is available.
+- DEMO execution, bridge authentication, journal/idempotency, and pending LIMIT/STOP mapping are unchanged.
+
+# CRT Terminal 0.1.44
+
+- Pending orders are classified from the current fresh Bid/Ask: LONG below Ask is BUY LIMIT, LONG above Ask is BUY STOP, SHORT above Bid is SELL LIMIT, and SHORT below Bid is SELL STOP.
+- Entry at the quote or invalid/stale Bid/Ask data keeps the order blocked.
+- MT5 bridge validation and mapping cover all four pending order types.
+
 # CRT Terminal 0.1.43
 
 - Recovery no longer lets an orphaned browser-local pending-request ID block DEMO execution when the authoritative MT5 bridge status reports no unresolved request and that local-only ID returns HTTP 404 `REQUEST_NOT_FOUND`.
