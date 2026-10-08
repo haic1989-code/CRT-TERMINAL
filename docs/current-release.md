@@ -1,3 +1,11 @@
+# CRT Terminal 0.1.47
+
+- Open-position floating P/L now uses a dedicated lightweight MT5 snapshot instead of waiting for the full five-second portfolio refresh.
+- The live position loop targets a 200 ms cadence (5 Hz), never overlaps requests, backs off to one second after transport errors, and aborts cleanly when the shell unmounts.
+- The lightweight bridge path reads only current open positions from `positions_get()`; commission/history lookup remains on the slower full portfolio refresh. Existing commissions are preserved between full snapshots.
+- New and closed tickets are reflected by the live snapshot, while orders, symbol specifications and commission accounting keep their existing slower refresh path.
+- Trading/execution logic, FX Replay and UI design are unchanged. Full CI must pass before signed updater publication.
+
 # CRT Terminal 0.1.46
 
 - Planner confirmation sends direction and levels. The authenticated owning MT5 backend reads one current tick per prepare/send preflight and determines BUY LIMIT, BUY STOP, SELL LIMIT or SELL STOP. Entry equal to the reference price fails closed.
