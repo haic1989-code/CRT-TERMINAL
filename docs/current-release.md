@@ -1,3 +1,12 @@
+# CRT Terminal 0.1.48
+
+- Accepted UI sprint: compact market context, one inline tools workspace with Levels / Indicators / Drawing tabs, active-tool count, and a larger transaction Planner. Existing toggle, drawing, reference-level, indicator and lot/target handlers are retained.
+- Selecting a position switches the same right-panel area to Manage Position with its P/L, volume and levels. This is a position readout; changing SL/TP or closing a position remains in MT5. DEMO confirmation and execution recovery stay mounted.
+- FX Replay now uses a CRT Local Market Lab workspace: central archive/session stage, Archives / Import / Session tabs, readable archive records and stepped import flow. Existing playback, reverse, tick/candle stepping, whole-archive timeline, pagination, strategies and simulation remain available.
+- Replay calculations, archive formats, MT5 import semantics and trading/execution safety are unchanged. The header Start Replay opens data and starts the existing player; 10x is available in the existing speed control.
+- Reviewed browser captures at 2560x1440 and 1920x1080. Local JS/TS tests (136), build/typecheck and all 36 Playwright scenarios passed, including one repeated corrected visual assertion. UI preview received user PASS. Signed release requires green CI for this main commit.
+- Includes the 0.1.47 lightweight open-position P/L refresh. Live Windows/MT5 installation and in-app update acceptance remain NOT RUN.
+
 # CRT Terminal 0.1.47
 
 - Open-position floating P/L now uses a dedicated lightweight MT5 snapshot instead of waiting for the full five-second portfolio refresh.
