@@ -517,6 +517,9 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
 
   const sessionReady = selectedArchive?.status === 'complete'
   const labStatus = ticks.length ? 'SESJA ZAŁADOWANA' : sessionReady || completeCount > 0 ? 'GOTOWY' : 'OFFLINE'
+  const archiveSource = typeof selectedArchive?.manifest.source === 'string' ? selectedArchive.manifest.source : null
+  const sourceLabel = archiveSource === 'MetaTrader5.copy_ticks_range' ? 'MT5 · HISTORIA BROKERA' : archiveSource === 'MT5 tick CSV export supplied by user' ? 'MT5 · EKSPORT CSV' : archiveSource
+  const previewRangeAvailable = selectedArchive && Number.isFinite(selectedArchive.from_ms) && Number.isFinite(selectedArchive.to_ms) && selectedArchive.to_ms >= selectedArchive.from_ms
   const startPlayback = () => {
     if (!sessionReady || loadingTicks || pageTransition) return
     setWorkspaceTab('session')
@@ -532,17 +535,24 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
       {error && <p className="fx-replay-error fx-lab-error" role="alert">Luna › {error}</p>}
       <div className="fx-lab-workspace">
         <main className="fx-lab-stage">
-          {selectedArchive ? <div className="fx-session-card" aria-label="Wybrane archiwum">
+          {selectedArchive && ticks.length > 0 ? <div className="fx-session-card" aria-label="Wybrane archiwum">
             <div className="fx-session-card-heading"><div><small>AKTYWNE ARCHIWUM</small><h3>{selectedArchive.symbol}</h3></div><span className="fx-lab-status">{statusLabel[selectedArchive.status]}</span></div>
             <div className="fx-session-metadata"><span>ZAKRES UTC<strong>{showTime(selectedArchive.from_ms)} → {showTime(selectedArchive.to_ms)}</strong></span><span>BROKER<strong>{selectedArchive.broker || 'Niepodany'} · {selectedArchive.server || 'serwer niepodany'}</strong></span><span>RZECZYWISTE TICKI<strong>{selectedArchive.tick_count.toLocaleString('pl-PL')}</strong></span></div>
-          </div> : <div className="fx-stage-heading"><small>LOKALNA HISTORIA / RZECZYWISTE TICKI</small><span>{completeCount.toString().padStart(2,'0')} GOTOWYCH ARCHIWÓW</span></div>}
+          </div> : !selectedArchive ? <div className="fx-stage-heading"><small>LOKALNA HISTORIA / RZECZYWISTE TICKI</small><span>{completeCount.toString().padStart(2,'0')} GOTOWYCH ARCHIWÓW</span></div> : null}
           {ticks.length > 0 ? <><section className="fx-replay-player fx-lab-chart" aria-label="Odtwarzacz ticków FX Replay">
           <div className="fx-replay-section-title">RYNEK / ODTWARZANIE <small>{selectedArchive?.symbol || 'ARCHIWUM'} · {tickPageOffset + cursorIndex + 1} / {selectedArchive?.tick_count}</small></div>
           <div className="fx-replay-player-readout"><strong>Bid {ticks[cursorIndex]?.bid.toLocaleString('pl-PL')}</strong><strong>Ask {ticks[cursorIndex]?.ask.toLocaleString('pl-PL')}</strong><span>{showTime(ticks[cursorIndex]?.time_msc || 0)}. {String(ticks[cursorIndex]?.time_msc || 0).slice(-3)}</span><label>ŚWIECA<select value={chartInterval} onChange={event => setChartInterval(event.target.value)}>{Object.keys(replayIntervals).map(value => <option key={value}>{value}</option>)}</select></label></div>
           <ReplayPriceChart ticks={ticks} cursor={cursorIndex} events={events} intervalMs={replayIntervals[chartInterval]} />
-        </section></> : <section className="fx-lab-empty" aria-label="Podgląd archiwum">
+        </section></> : selectedArchive ? <section className="fx-session-card fx-session-preview" aria-label="SESSION PREVIEW">
+            <div className="fx-preview-heading"><small>SESSION PREVIEW</small><span className="fx-lab-status">{sessionReady ? 'READY' : statusLabel[selectedArchive.status]}</span></div>
+            <div className="fx-preview-identity"><h3>{selectedArchive.symbol}</h3><span>LOKALNE ARCHIWUM / REAL BID / ASK TICKS</span></div>
+            <div className="fx-preview-metadata"><span>BROKER<strong>{selectedArchive.broker || 'Niepodany'}</strong></span><span>SERVER<strong>{selectedArchive.server || 'Niepodany'}</strong></span><span>LICZBA TICKÓW<strong>{selectedArchive.tick_count.toLocaleString('pl-PL')}</strong></span></div>
+            {previewRangeAvailable && <figure className="fx-preview-timeline" aria-label="Zakres dat archiwum"><figcaption>ZAKRES ARCHIWUM · UTC</figcaption><div className="fx-preview-range-line" aria-hidden="true"><i />{[1,2,3,4,5,6,7].map(mark=><span key={mark}/>)}<i /></div><div className="fx-preview-range-dates"><time>{showTime(selectedArchive.from_ms)}</time><time>{showTime(selectedArchive.to_ms)}</time></div></figure>}
+            <div className="fx-preview-provenance"><span>ŹRÓDŁO DANYCH<strong>{sourceLabel || 'Niepodane'}</strong></span>{selectedArchive.sha256 && <span className="fx-preview-integrity" title={selectedArchive.sha256}>SHA-256 ZAPISANE<strong>{selectedArchive.sha256.slice(0,16)}…</strong></span>}</div>
+            <div className="fx-preview-actions"><button type="button" className="primary" disabled={loadingTicks || !!pageTransition} onClick={()=>{setWorkspaceTab('session');void loadTickPage(selectedArchiveId,0)}}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ REPLAY'} <span aria-hidden="true">▶</span></button><span>Podgląd ceny po otwarciu archiwum.</span></div>
+          </section> : <section className="fx-lab-empty" aria-label="Podgląd archiwum">
             <div className="fx-empty-signal" aria-hidden="true"><span>LOCAL</span><i>↺</i><span>REPLAY</span></div>
-            <div className="fx-empty-copy"><small>{selectedArchive ? 'SESJA GOTOWA DO OTWARCIA' : 'TWÓJ RYNEK. TWOJA SESJA.'}</small><h3>{selectedArchive ? 'Wróć do wybranego rynku.' : 'Wróć do momentu, który chcesz zrozumieć.'}</h3><p>{selectedArchive ? 'Otwórz zapisane ticki i przejdź przez sesję krok po kroku. Podgląd ceny pojawi się po wczytaniu danych.' : 'Wybierz lokalne archiwum lub pobierz historię z MT5. Odtwarzaj rzeczywiste ceny Bid / Ask i analizuj przebieg sesji.'}</p><div className="fx-empty-actions"><button type="button" className="primary" disabled={loadingTicks || !!pageTransition} onClick={()=>selectedArchive ? void loadTickPage(selectedArchiveId,0) : setWorkspaceTab('archives')}>{loadingTicks ? 'WCZYTUJĘ…' : selectedArchive ? 'OTWÓRZ SESJĘ ▶' : 'WYBIERZ ARCHIWUM ↗'}</button><button type="button" onClick={()=>setWorkspaceTab('import')}>NOWY IMPORT</button></div></div>
+            <div className="fx-empty-copy"><small>TWÓJ RYNEK. TWOJA SESJA.</small><h3>Wróć do momentu, który chcesz zrozumieć.</h3><p>Wybierz lokalne archiwum lub pobierz historię z MT5. Odtwarzaj rzeczywiste ceny Bid / Ask i analizuj przebieg sesji.</p><div className="fx-empty-actions"><button type="button" className="primary" disabled={loadingTicks || !!pageTransition} onClick={()=>setWorkspaceTab('archives')}>WYBIERZ ARCHIWUM ↗</button><button type="button" onClick={()=>setWorkspaceTab('import')}>NOWY IMPORT</button></div></div>
             <div className="fx-lab-workflow"><div><b>01</b><span>WYBIERZ<span>Lokalne archiwum ticków</span></span></div><div><b>02</b><span>OTWÓRZ<span>Symbol, zakres i broker</span></span></div><div><b>03</b><span>ODTWARZAJ<span>Cofaj, przyspieszaj, analizuj</span></span></div></div>
           </section>}
           {!ticks.length && <div className="fx-stage-footer"><span>BID / ASK · BEZ GENEROWANYCH TICKÓW</span><span>LOKALNE ARCHIWUM / OFFLINE</span></div>}
@@ -557,7 +567,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <div className="fx-replay-archive-heading"><b>{archive.symbol}</b><span>{statusLabel[archive.status]}</span></div>
             <p>{archive.broker || 'Broker MT5'} · {archive.server || 'serwer niepodany'}</p>
             <p>{showTime(archive.from_ms)} → {showTime(archive.to_ms)}</p>
-            <div className="fx-replay-archive-footer"><span>{archive.tick_count.toLocaleString('pl-PL')} ticków</span><span>{archive.sha256 ? 'SHA-256 ' + archive.sha256.slice(0, 12) + '…' : archive.error || 'bez sumy — import niekompletny'}</span></div>
+            <div className="fx-replay-archive-footer"><span>{archive.tick_count.toLocaleString('pl-PL')} ticków</span><span>{archive.sha256 ? 'SHA-256 ' + archive.sha256.slice(0, 12) + '…' : archive.error || 'SHA-256 niepodana'}</span></div>
             {archive.status === 'complete' && archive.manifest.source === 'MetaTrader5.copy_ticks_range' && archive.manifest.mt5_range_boundary_policy !== 'enclosing_seconds_filter_ms_v1' && <p className="fx-replay-note">Luna › Starszy importer mógł pomijać ticki na końcu porcji. To archiwum nadal odtworzysz; przed dokładnym testem pobierz ten zakres ponownie.</p>}
             {archive.status === 'complete' && <div className="fx-replay-archive-actions"><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => chooseArchive(archive)}>{selectedArchiveId === archive.id ? 'WYBRANE' : 'WYBIERZ'}</button><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { chooseArchive(archive); setWorkspaceTab('session'); void loadTickPage(archive.id, 0) }}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ'}</button></div>}
           </article>)}
