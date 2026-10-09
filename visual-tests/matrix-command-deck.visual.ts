@@ -240,6 +240,13 @@ async function unlockTextDeck(page: Page) {
   await expect(page.locator('.matrix-command-deck .session')).toHaveText('Luna › Witaj ponownie, admin :)')
 }
 
+
+async function openDeckTools(page: Page, category: 'POZIOMY' | 'WSKAŹNIKI' | 'RYSOWANIE') {
+  const toggle = page.locator('.deck-tools-toggle')
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+  await page.getByRole('tab', { name: category, exact: true }).click()
+}
+
 test('approved text deck integrates the complete introduction, controls and manual lots',async({page})=>{
   const marginQueries:string[]=[]
   const {pageErrors,browserErrors}=await prepareVisualPage(page,marginQueries)
@@ -259,7 +266,7 @@ test('approved text deck integrates the complete introduction, controls and manu
   await expect(deck).toHaveAttribute('data-motion-phase','restored',{timeout:20000})
   await expect(deck.locator('.session')).toHaveText('Luna › Witaj ponownie, admin :)')
   await expect(deck).not.toContainText('command deck online')
-  await expect(deck.locator('section')).toHaveCount(5)
+  await expect(deck.locator('section')).toHaveCount(3)
   await expect(deck.locator('.demo-execution')).toHaveCount(0)
   await expect(page.locator('.sf-right-column')).toHaveCSS('border-top-width','0px')
   await expect(deck.getByRole('slider',{name:'Ryzyko na transakcję'})).toHaveCount(0)
@@ -267,12 +274,15 @@ test('approved text deck integrates the complete introduction, controls and manu
   await context.click();await expect(context).toHaveAttribute('aria-pressed','true')
   await expect(page.locator('.sf-timeframes').getByRole('button',{name:'M15',exact:true})).toHaveClass(/active/)
   await expect(page.getByRole('dialog')).toHaveCount(0)
+  await openDeckTools(page, 'WSKAŹNIKI')
   await deck.getByRole('button',{name:'RSI',exact:true}).click()
   await expect(chart).toHaveAttribute('data-indicator-pane-count','1')
   await deck.getByRole('spinbutton',{name:'Okres RSI'}).fill('9')
   await expect(deck.getByRole('spinbutton',{name:'Okres RSI'})).toHaveValue('9')
+  await openDeckTools(page, 'POZIOMY')
   await deck.getByRole('button',{name:'DZIŚ · D-H / D-L',exact:true}).click()
   await expect(chart).toHaveAttribute('data-reference-level-count','2')
+  await openDeckTools(page, 'RYSOWANIE')
   await deck.getByRole('button',{name:'Poziom',exact:true}).click()
   const box=await chart.boundingBox();if(!box)throw Error('missing chart')
   await chart.click({position:{x:box.width*.6,y:box.height*.45}})
@@ -303,6 +313,7 @@ test('approved text deck integrates the complete introduction, controls and manu
   await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   await page.screenshot({path:path.join(output,'matrix-text-deck-390.png')})
   await page.emulateMedia({reducedMotion:'reduce'});await reloadTerminal(page);await deck.getByRole('textbox',{name:'Wpisz odpowiedź tak'}).fill('tak');await deck.getByRole('textbox',{name:'Wpisz odpowiedź tak'}).press('Enter')
+  await openDeckTools(page, 'WSKAŹNIKI')
   await expect(deck.getByRole('button',{name:'RSI',exact:true})).toHaveAttribute('aria-pressed','true')
   await expect(deck.getByRole('spinbutton',{name:'Okres RSI'})).toHaveValue('9')
   await expect(deck).toHaveAttribute('data-profile','power')

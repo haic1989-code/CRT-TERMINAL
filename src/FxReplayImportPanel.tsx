@@ -58,7 +58,7 @@ function ReplayPriceChart({ ticks, cursor, events, intervalMs }: { ticks: Replay
   const visibleEvents = events.filter(event => ['entry', 'exit', 'pending'].includes(event.kind) && event.tick_sequence !== null && Number(event.tick_sequence) <= ticks[cursor]?.sequence && Number(event.price) > 0).slice(-1000)
   const firstSeq = ticks[0]?.sequence ?? 0
   const lastSeq = ticks[cursor]?.sequence ?? firstSeq
-  return <svg className="fx-replay-chart" viewBox="0 0 1000 310" role="img" aria-label="Wykres świecowy odtworzony z ticków archiwum">
+  return <svg className="fx-replay-chart" viewBox="0 0 1060 310" role="img" aria-label="Wykres świecowy odtworzony z ticków archiwum">
     {[0, 1, 2, 3, 4].map(index => <g key={index}><line x1="48" x2="966" y1={35 + index * 58} y2={35 + index * 58} /><text x="972" y={39 + index * 58}>{(max - span * index / 4).toFixed(2)}</text></g>)}
     {candles.map((candle, index) => {
       const x = xForIndex(index)
@@ -157,6 +157,7 @@ def on_stop(context):
 
 export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol: string; onClose: () => void }) {
   const now = Date.now()
+  const [workspaceTab, setWorkspaceTab] = useState<'archives' | 'import' | 'session'>('archives')
   const [importSource, setImportSource] = useState('mt5')
   const [inbox, setInbox] = useState<{ folder: string; values: { name: string; bytes: number }[] }>({ folder: '', values: [] })
   const [fileName, setFileName] = useState('')
@@ -430,7 +431,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
 
   useEffect(() => () => { pageGeneration.current++; strategyGeneration.current++ }, [])
 
-  const loadTickPage = async (archiveId: string, offset: number, sequence = offset) => {
+  const loadTickPage = async (archiveId: string, offset: number, sequence = offset, startPlayback = false) => {
     const generation = ++pageGeneration.current
     setLoadingTicks(true)
     setPlaying(false)
@@ -442,6 +443,7 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
       setTicks(page.values)
       setTickPageOffset(page.offset)
       setCursorIndex(Math.max(0, Math.min(page.values.length - 1, sequence - page.offset)))
+      if (startPlayback && page.values.length > 1) { setPlayDirection(1); setPlaying(true) }
     } catch (reason) {
       if (generation === pageGeneration.current) setError(reason instanceof Error ? reason.message : 'Nie udało się otworzyć strony ticków.')
     } finally { if (generation === pageGeneration.current) setLoadingTicks(false) }
@@ -513,15 +515,56 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
     return () => { stopped = true }
   }, [pageTransition])
 
+  const sessionReady = selectedArchive?.status === 'complete'
+  const labStatus = ticks.length ? 'SESJA ZAŁADOWANA' : sessionReady || completeCount > 0 ? 'GOTOWY' : 'OFFLINE'
+  const startPlayback = () => {
+    if (!sessionReady || loadingTicks || pageTransition) return
+    setWorkspaceTab('session')
+    if (ticks.length > 1) { setPlayDirection(1); setPlaying(true) }
+    else void loadTickPage(selectedArchiveId, 0, 0, true)
+  }
   return <div className="fx-replay-scrim" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="fx-replay-window" role="dialog" aria-modal="true" aria-labelledby="fx-replay-title">
+    <section className="fx-replay-window fx-lab" role="dialog" aria-modal="true" aria-labelledby="fx-replay-title">
       <header className="fx-replay-header">
-        <div><small>CRT // LOCAL MARKET LAB</small><h2 id="fx-replay-title">FX REPLAY</h2><p>Rzeczywiste ticki · lokalne skrypty Python · symulowane transakcje</p></div>
-        <button type="button" className="fx-replay-close" aria-label="Zamknij FX Replay" onClick={onClose}>×</button>
+        <div className="fx-lab-brand"><small>CRT // LOCAL MARKET LAB</small><h2 id="fx-replay-title">FX REPLAY<span className="fx-lab-status" role="status">{labStatus}</span></h2><p>Rzeczywiste ticki. Twój rynek, w Twoim tempie.</p></div>
+        <div className="fx-lab-header-actions"><button type="button" onClick={()=>setWorkspaceTab('import')}>NOWY IMPORT</button><button type="button" onClick={()=>setWorkspaceTab('archives')}>OTWÓRZ ARCHIWUM</button><button type="button" className="primary" disabled={!sessionReady || loadingTicks || !!pageTransition} onClick={startPlayback}>{loadingTicks ? 'WCZYTUJĘ…' : 'START REPLAY'} <span aria-hidden="true">▶</span></button><button type="button" className="fx-replay-close" aria-label="Zamknij FX Replay" onClick={onClose}>×</button></div>
       </header>
-      <div className="fx-replay-content fx-replay-content--workspace">
-        <form className="fx-replay-import" onSubmit={beginImport}>
-          <div className="fx-replay-section-title"><span>01</span> NOWY IMPORT</div>
+      {error && <p className="fx-replay-error fx-lab-error" role="alert">Luna › {error}</p>}
+      <div className="fx-lab-workspace">
+        <main className="fx-lab-stage">
+          {selectedArchive ? <div className="fx-session-card" aria-label="Wybrane archiwum">
+            <div className="fx-session-card-heading"><div><small>AKTYWNE ARCHIWUM</small><h3>{selectedArchive.symbol}</h3></div><span className="fx-lab-status">{statusLabel[selectedArchive.status]}</span></div>
+            <div className="fx-session-metadata"><span>ZAKRES UTC<strong>{showTime(selectedArchive.from_ms)} → {showTime(selectedArchive.to_ms)}</strong></span><span>BROKER<strong>{selectedArchive.broker || 'Niepodany'} · {selectedArchive.server || 'serwer niepodany'}</strong></span><span>RZECZYWISTE TICKI<strong>{selectedArchive.tick_count.toLocaleString('pl-PL')}</strong></span></div>
+          </div> : <div className="fx-stage-heading"><small>LOKALNA HISTORIA / RZECZYWISTE TICKI</small><span>{completeCount.toString().padStart(2,'0')} GOTOWYCH ARCHIWÓW</span></div>}
+          {ticks.length > 0 ? <><section className="fx-replay-player fx-lab-chart" aria-label="Odtwarzacz ticków FX Replay">
+          <div className="fx-replay-section-title">RYNEK / ODTWARZANIE <small>{selectedArchive?.symbol || 'ARCHIWUM'} · {tickPageOffset + cursorIndex + 1} / {selectedArchive?.tick_count}</small></div>
+          <div className="fx-replay-player-readout"><strong>Bid {ticks[cursorIndex]?.bid.toLocaleString('pl-PL')}</strong><strong>Ask {ticks[cursorIndex]?.ask.toLocaleString('pl-PL')}</strong><span>{showTime(ticks[cursorIndex]?.time_msc || 0)}. {String(ticks[cursorIndex]?.time_msc || 0).slice(-3)}</span><label>ŚWIECA<select value={chartInterval} onChange={event => setChartInterval(event.target.value)}>{Object.keys(replayIntervals).map(value => <option key={value}>{value}</option>)}</select></label></div>
+          <ReplayPriceChart ticks={ticks} cursor={cursorIndex} events={events} intervalMs={replayIntervals[chartInterval]} />
+        </section></> : <section className="fx-lab-empty" aria-label="Podgląd archiwum">
+            <div className="fx-empty-signal" aria-hidden="true"><span>LOCAL</span><i>↺</i><span>REPLAY</span></div>
+            <div className="fx-empty-copy"><small>{selectedArchive ? 'SESJA GOTOWA DO OTWARCIA' : 'TWÓJ RYNEK. TWOJA SESJA.'}</small><h3>{selectedArchive ? 'Wróć do wybranego rynku.' : 'Wróć do momentu, który chcesz zrozumieć.'}</h3><p>{selectedArchive ? 'Otwórz zapisane ticki i przejdź przez sesję krok po kroku. Podgląd ceny pojawi się po wczytaniu danych.' : 'Wybierz lokalne archiwum lub pobierz historię z MT5. Odtwarzaj rzeczywiste ceny Bid / Ask i analizuj przebieg sesji.'}</p><div className="fx-empty-actions"><button type="button" className="primary" disabled={loadingTicks || !!pageTransition} onClick={()=>selectedArchive ? void loadTickPage(selectedArchiveId,0) : setWorkspaceTab('archives')}>{loadingTicks ? 'WCZYTUJĘ…' : selectedArchive ? 'OTWÓRZ SESJĘ ▶' : 'WYBIERZ ARCHIWUM ↗'}</button><button type="button" onClick={()=>setWorkspaceTab('import')}>NOWY IMPORT</button></div></div>
+            <div className="fx-lab-workflow"><div><b>01</b><span>WYBIERZ<span>Lokalne archiwum ticków</span></span></div><div><b>02</b><span>OTWÓRZ<span>Symbol, zakres i broker</span></span></div><div><b>03</b><span>ODTWARZAJ<span>Cofaj, przyspieszaj, analizuj</span></span></div></div>
+          </section>}
+          {!ticks.length && <div className="fx-stage-footer"><span>BID / ASK · BEZ GENEROWANYCH TICKÓW</span><span>LOKALNE ARCHIWUM / OFFLINE</span></div>}
+        </main>
+        <aside className="fx-lab-sidebar" aria-label="Workspace FX Replay">
+          <div className="fx-workspace-tabs" role="tablist" aria-label="Workspace replay">{([['archives','ARCHIWA'],['import','IMPORT'],['session','SESJA']] as const).map(([id,label])=><button type="button" role="tab" id={'fx-tab-'+id} key={id} aria-selected={workspaceTab===id} aria-controls={'fx-panel-'+id} tabIndex={workspaceTab===id?0:-1} onKeyDown={event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const ids=['archives','import','session'] as const;const index=event.key==='Home'?0:event.key==='End'?2:(ids.indexOf(workspaceTab)+(event.key==='ArrowRight'?1:2))%3;setWorkspaceTab(ids[index]);document.getElementById('fx-tab-'+ids[index])?.focus()}} onClick={()=>setWorkspaceTab(id)}>{label}{id==='archives' && <span>{completeCount}</span>}</button>)}</div>
+          <div className="fx-workspace-scroll">
+            {workspaceTab === 'archives' && <>        <section className="fx-replay-archives" id="fx-panel-archives" role="tabpanel" aria-labelledby="fx-tab-archives">
+          <div className="fx-replay-section-title" id="fx-replay-archives-title">ARCHIWA LOKALNE <small>{completeCount} GOTOWE</small></div>
+          {archives.length === 0 && <p className="fx-replay-empty">Luna › Nie ma jeszcze zaimportowanych archiwów. Tutaj pojawi się ich status i zakres.</p>}
+          {archives.map(archive => <article className={'fx-replay-archive ' + (archive.status === 'complete' ? 'is-complete' : 'is-incomplete') + (selectedArchiveId === archive.id ? ' is-selected' : '')} key={archive.id}>
+            <div className="fx-replay-archive-heading"><b>{archive.symbol}</b><span>{statusLabel[archive.status]}</span></div>
+            <p>{archive.broker || 'Broker MT5'} · {archive.server || 'serwer niepodany'}</p>
+            <p>{showTime(archive.from_ms)} → {showTime(archive.to_ms)}</p>
+            <div className="fx-replay-archive-footer"><span>{archive.tick_count.toLocaleString('pl-PL')} ticków</span><span>{archive.sha256 ? 'SHA-256 ' + archive.sha256.slice(0, 12) + '…' : archive.error || 'bez sumy — import niekompletny'}</span></div>
+            {archive.status === 'complete' && archive.manifest.source === 'MetaTrader5.copy_ticks_range' && archive.manifest.mt5_range_boundary_policy !== 'enclosing_seconds_filter_ms_v1' && <p className="fx-replay-note">Luna › Starszy importer mógł pomijać ticki na końcu porcji. To archiwum nadal odtworzysz; przed dokładnym testem pobierz ten zakres ponownie.</p>}
+            {archive.status === 'complete' && <div className="fx-replay-archive-actions"><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => chooseArchive(archive)}>{selectedArchiveId === archive.id ? 'WYBRANE' : 'WYBIERZ'}</button><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { chooseArchive(archive); setWorkspaceTab('session'); void loadTickPage(archive.id, 0) }}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ'}</button></div>}
+          </article>)}
+        </section>
+</>}
+            {workspaceTab === 'import' && <>        <form id="fx-panel-import" role="tabpanel" aria-labelledby="fx-tab-import" className="fx-replay-import" onSubmit={beginImport}>
+          <div className="fx-replay-section-title">NOWY IMPORT</div><h3 className="fx-step"><span>01</span> Źródło danych</h3>
           <label>ŹRÓDŁO HISTORII<select value={importSource} disabled={!!activeJob} onChange={event => setImportSource(event.target.value)}><option value="mt5">Historia w MT5</option><option value="file">Eksport ticków z folderu</option></select></label>
           {importSource === 'file' && <>
             <p className="fx-replay-note">Luna › Umieść eksport z zakładki Ticki MT5 w folderze: <span style={{ overflowWrap: 'anywhere' }}>{inbox.folder || 'Odczytuję folder…'}</span></p>
@@ -530,16 +573,16 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             <label>CZAS EKSPORTU · PRZESUNIĘCIE OD UTC W MINUTACH<input type="number" min="-840" max="840" step="1" value={utcOffset} onChange={event => setUtcOffset(event.target.value)} /></label>
             <p className="fx-replay-note">UTC: 0; UTC+2: 120. Wskaż dokładny symbol źródłowy. CSV nie zapisuje nazwy brokera; nie rozpoznaję jej automatycznie. Plik świec OHLC nie nadaje się do testu na rzeczywistych tickach.</p>
           </>}
-          <label>SYMBOL BROKERA<input value={symbol} maxLength={64} onChange={event => setSymbol(event.target.value)} placeholder="np. XAUUSD.a" /></label>
+          <h3 className="fx-step"><span>02</span> Instrument i zakres</h3><label>SYMBOL BROKERA<input value={symbol} maxLength={64} onChange={event => setSymbol(event.target.value)} placeholder="np. XAUUSD.a" /></label>
           <label>ZAKRES HISTORII<select value={rangeMode} disabled={!!activeJob} onChange={event => setRangeMode(event.target.value)}><option value="days">Całe dni · od początku do końca dnia</option><option value="times">Dokładne daty i godziny</option></select></label>
           <div className="fx-replay-range">
             <label>OD<input required type={rangeMode === 'days' ? 'date' : 'datetime-local'} max={rangeMode === 'days' ? localInputTime(now).slice(0, 10) : localInputTime(now)} value={rangeMode === 'days' ? fromTime.slice(0, 10) : fromTime} onChange={event => setFromTime(rangeMode === 'days' && event.target.value ? event.target.value + 'T00:00' : event.target.value)} /></label>
             <label>DO · WŁĄCZNIE<input required type={rangeMode === 'days' ? 'date' : 'datetime-local'} max={rangeMode === 'days' ? localInputTime(now).slice(0, 10) : localInputTime(now)} value={rangeMode === 'days' ? toTime.slice(0, 10) : toTime} onChange={event => setToTime(rangeMode === 'days' && event.target.value ? event.target.value + 'T23:59' : event.target.value)} /></label>
           </div>
-          {rangeMode === 'days' && <p className="fx-replay-note">Luna › Wybrane dni obejmuję od 00:00:00 do 23:59:59,999 w Twoim czasie lokalnym. Domyślnie wybieram siedem zakończonych dni. Archiwum zapisuję w UTC.</p>}
+          {rangeMode === 'days' && <p className="fx-replay-note">Całe dni: 00:00:00–23:59:59,999 czasu lokalnego. Archiwum zapisuje czas UTC.</p>}
           {rangeMode === 'days' && toTime.slice(0, 10) === localInputTime(now).slice(0, 10) && <p className="fx-replay-note">Luna › Dzisiaj dzień jeszcze trwa. Pobiorę dostępne ticki do chwili rozpoczęcia importu; to archiwum nie obejmie całego dnia.</p>}
-          <div className="fx-replay-data-mode"><span>TRYB TESTU</span><b>RZECZYWISTE TICKI MT5 · BID / ASK</b><small>Zapisujemy rzeczywiste ticki; nie generujemy ich ze świec OHLC.</small></div>
-          <p className="fx-replay-note">Luna › MT5 dostarcza historię lub samą specyfikację symbolu przy imporcie pliku. Daty wybierasz w swoim czasie lokalnym; poza sesją pojawią się wyłącznie rzeczywiste ticki dostępne u brokera. Gotowe dane wykorzystasz offline.</p>
+          <h3 className="fx-step"><span>03</span> Zapis lokalny</h3><div className="fx-replay-data-mode"><span>TRYB TESTU</span><b>RZECZYWISTE TICKI MT5 · BID / ASK</b><small>Zapisujemy rzeczywiste ticki; nie generujemy ich ze świec OHLC.</small></div>
+          <p className="fx-replay-note">Historia i specyfikacja z MT5. Przy imporcie pliku MT5 dostarcza specyfikację. Gotowe archiwum odtworzysz offline.</p>
           <div className="fx-replay-actions">
             <button type="submit" disabled={busy || !!activeJob}>{busy ? 'ŁĄCZĘ Z MT5…' : 'IMPORTUJ TICKI'}</button>
             {activeJob && <button type="button" className="secondary" disabled={job?.status !== 'importing'} onClick={() => void stopImport()}>{job?.status === 'finalizing' ? 'FINALIZUJĘ ARCHIWUM…' : 'ANULUJ IMPORT'}</button>}
@@ -549,38 +592,28 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
             {activeJob && <><progress max="100" value={job.progress} /><span>{job.stage === 'file_read' ? 'Czytam eksport ticków z dysku…' : job.stage === 'mt5_fetch' ? `MT5 pobiera ${job.range_from_ms ? showTime(job.range_from_ms) : ''} → ${job.range_to_ms ? showTime(job.range_to_ms) : ''}` : (job.stage === 'sqlite_write' || job.stage === 'archive_write') ? 'Zapisuję pobrane ticki do lokalnego archiwum…' : job.stage === 'sha256_finalize' ? 'Kończę sumę kontrolną bez ponownego skanowania archiwum…' : `Zakres: ${job.progress}% · do ${showTime(job.completed_through_ms)}`} · {Number(job.ticks_per_second || 0).toLocaleString('pl-PL')} tick/s</span><small>Ostatnia porcja · MT5 {Number(job.last_chunk_fetch_ms || 0)} ms · zapis {Number(job.last_chunk_write_ms || 0)} ms</small></>}
             {job.error && <small>{job.error}</small>}
           </div>}
-          {error && <p className="fx-replay-error" role="alert">Luna › {error}</p>}
         </form>
-        <section className="fx-replay-archives" aria-labelledby="fx-replay-archives-title">
-          <div className="fx-replay-section-title" id="fx-replay-archives-title"><span>02</span> ARCHIWA LOKALNE <small>{completeCount} GOTOWE</small></div>
-          {archives.length === 0 && <p className="fx-replay-empty">Luna › Nie ma jeszcze zaimportowanych archiwów. Tutaj pojawi się ich status i zakres.</p>}
-          {archives.map(archive => <article className={'fx-replay-archive ' + (archive.status === 'complete' ? 'is-complete' : 'is-incomplete') + (selectedArchiveId === archive.id ? ' is-selected' : '')} key={archive.id}>
-            <div className="fx-replay-archive-heading"><b>{archive.symbol}</b><span>{statusLabel[archive.status]}</span></div>
-            <p>{archive.broker || 'Broker MT5'} · {archive.server || 'serwer niepodany'}</p>
-            <p>{showTime(archive.from_ms)} → {showTime(archive.to_ms)}</p>
-            <div className="fx-replay-archive-footer"><span>{archive.tick_count.toLocaleString('pl-PL')} ticków</span><span>{archive.sha256 ? 'SHA-256 ' + archive.sha256.slice(0, 12) + '…' : archive.error || 'bez sumy — import niekompletny'}</span></div>
-            {archive.status === 'complete' && archive.manifest.source === 'MetaTrader5.copy_ticks_range' && archive.manifest.mt5_range_boundary_policy !== 'enclosing_seconds_filter_ms_v1' && <p className="fx-replay-note">Luna › Starszy importer mógł pomijać ticki na końcu porcji. To archiwum nadal odtworzysz; przed dokładnym testem pobierz ten zakres ponownie.</p>}
-            {archive.status === 'complete' && <div className="fx-replay-archive-actions"><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => chooseArchive(archive)}>{selectedArchiveId === archive.id ? 'WYBRANE DO SYMULACJI' : 'WYBIERZ ARCHIWUM'}</button><button type="button" className="fx-replay-select" disabled={loadingTicks || !!pageTransition} onClick={() => { chooseArchive(archive); void loadTickPage(archive.id, 0) }}>{loadingTicks ? 'WCZYTUJĘ…' : 'OTWÓRZ ODTWARZACZ'}</button></div>}
-          </article>)}
-        </section>
-        <section className="fx-replay-strategies" aria-labelledby="fx-replay-strategy-title">
-          <div className="fx-replay-section-title" id="fx-replay-strategy-title"><span>03</span> SKRYPT STRATEGII <small>PYTHON API v2 · SILNIK 3.1</small></div>
-          <label>NAZWA STRATEGII<input value={strategyName} maxLength={80} onChange={event => setStrategyName(event.target.value)} /></label>
+</>}
+            {workspaceTab === 'session' && <>        <section className="fx-replay-strategies" id="fx-panel-session" role="tabpanel" aria-labelledby="fx-tab-session">
+          <div className="fx-replay-section-title" id="fx-replay-strategy-title">SESJA / STRATEGIA <small>PYTHON API v2 · SILNIK 3.1</small></div>
+            <label className="fx-replay-select-label">ZAPISANY SKRYPT<select value={selectedStrategyId} onChange={event => void selectStrategy(event.target.value)}><option value="">Wybierz strategię</option>{strategies.map(strategy => <option key={strategy.id} value={strategy.id}>{strategy.name} · v{strategy.api_version}{strategy.api_version !== 2 ? ' · wczytaj do migracji' : ''}</option>)}</select></label><details className="fx-session-editor"><summary>EDYTOR STRATEGII PYTHON</summary>          <label>NAZWA STRATEGII<input value={strategyName} maxLength={80} onChange={event => setStrategyName(event.target.value)} /></label>
           <label>EDYTOR KODU PYTHON<textarea spellCheck={false} value={strategySource} onChange={event => setStrategySource(event.target.value)} /></label>
           <div className="fx-replay-strategy-actions">
             <button type="button" onClick={() => void addStrategy()} disabled={!strategyName.trim() || !strategySource.trim()}>ZAPISZ SKRYPT</button>
-            <label className="fx-replay-select-label">ZAPISANY SKRYPT<select value={selectedStrategyId} onChange={event => void selectStrategy(event.target.value)}><option value="">Wybierz strategię</option>{strategies.map(strategy => <option key={strategy.id} value={strategy.id}>{strategy.name} · v{strategy.api_version}{strategy.api_version !== 2 ? ' · wczytaj do migracji' : ''}</option>)}</select></label>
+
           </div>
+</details>
           <div className="fx-replay-account-settings" aria-label="Ustawienia rachunku testowego">
             <label>SALDO STARTOWE<input type="number" min="0.01" step="any" value={initialBalance} onChange={event => setInitialBalance(event.target.value)} /></label>
             <label>DŹWIGNIA<select value={leverage} onChange={event => setLeverage(event.target.value)}>{[1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000].map(value => <option key={value} value={value}>1:{value}</option>)}{!([1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000].includes(Number(leverage))) && <option value={leverage}>1:{leverage} · własna</option>}</select></label>
             <span>WALUTA DEPOZYTU <b>{depositCurrency}</b></span>
           </div>
-          <label>PARAMETRY JSON<textarea className="fx-replay-params" spellCheck={false} value={paramsText} onChange={event => setParamsText(event.target.value)} /></label>
+          <details className="fx-session-editor fx-session-advanced"><summary>PARAMETRY / PROFIL SYMULACJI</summary>          <label>PARAMETRY JSON<textarea className="fx-replay-params" spellCheck={false} value={paramsText} onChange={event => setParamsText(event.target.value)} /></label>
           <p className="fx-replay-note">Luna › Dla obsługiwanych kontraktów w walucie konta liczę P/L i ryzyko z wielkości kontraktu. Nowy profil uwzględnia ceny wejścia/limit, osobne stawki zleceń i zasady margin hedgingu. To migawka brokera: historyczne zmiany stawek, swap, stop-out, netting i sesje handlu pozostają do wdrożenia. Stawki maintenance szacuję ze stawek initial. Symulacja nie wysyła zleceń do MT5.</p>
           {selectedArchive && !brokerProfile?.version && <p className="fx-replay-note">Luna › To archiwum ma starszy profil finansowy. Odtwarzacz nadal działa. Aby odświeżyć profil, wybierz import MT5 dla dokładnie tego samego symbolu i zakresu — kompletne archiwum z poprawionymi granicami ticków wykorzystam z dysku.</p>}
-          {brokerProfile?.supported === false && <p className="fx-replay-error">Luna › Ten profil nie pozwala jeszcze na symulację finansową: {Array.isArray(brokerProfile.errors) ? brokerProfile.errors.map(String).join(' ') : 'brakuje obsługiwanych reguł brokera.'} Ticki nadal możesz odtworzyć.</p>}
           {brokerProfile?.supported === true && <p className="fx-replay-note">Luna › Profil brokera v{String(brokerProfile.version)} · zapisany {showTime(Number(brokerProfile.captured_at_ms || 0))} · stałe stawki z migawki MT5. Wcześniejsze raporty zachowują swoje reguły.</p>}
+</details>
+          {brokerProfile?.supported === false && <p className="fx-replay-error">Luna › Ten profil nie pozwala jeszcze na symulację finansową: {Array.isArray(brokerProfile.errors) ? brokerProfile.errors.map(String).join(' ') : 'brakuje obsługiwanych reguł brokera.'} Ticki nadal możesz odtworzyć.</p>}
           <div className="fx-replay-actions">
             <button type="button" disabled={!selectedArchiveId || !selectedStrategyId || selectedStrategy?.api_version !== 2 || !!run && ['queued', 'running'].includes(run.status)} onClick={() => void simulate()}>URUCHOM SYMULACJĘ</button>
             {run && ['queued', 'running'].includes(run.status) && <button type="button" className="secondary" onClick={() => void cancelRun()}>ANULUJ</button>}
@@ -593,34 +626,30 @@ export function FxReplayImportPanel({ initialSymbol, onClose }: { initialSymbol:
           </div>}
           {events.length > 0 && <div className="fx-replay-events"><div className="fx-replay-section-title"><span>04</span> DZIENNIK ZDARZEŃ <small>WIDOCZNY FRAGMENT · {events.length} ZDARZEŃ</small></div><div className="fx-replay-event-list">{events.filter(event => Number(event.tick_sequence) <= (ticks[cursorIndex]?.sequence ?? Infinity)).slice(-500).map(event => <div key={event.sequence} className={'fx-replay-event fx-replay-event--' + event.kind}><time>{showTime(event.time_msc)}</time><b>{event.kind.toUpperCase()}</b><span>{String(event.side || event.reason || '')}</span><span>{Number(event.price || 0).toLocaleString('pl-PL')}</span>{event.points !== undefined && <strong>{Number(event.points).toFixed(1)} pkt</strong>}</div>)}</div></div>}
         </section>
-        {ticks.length > 0 ? <section className="fx-replay-player" aria-label="Odtwarzacz ticków FX Replay">
-          <div className="fx-replay-section-title"><span>05</span> ODTWARZACZ TICKÓW <small>{selectedArchive?.symbol || 'ARCHIWUM'} · {tickPageOffset + cursorIndex + 1} / {selectedArchive?.tick_count}</small></div>
-          <div className="fx-replay-player-readout"><strong>Bid {ticks[cursorIndex]?.bid.toLocaleString('pl-PL')}</strong><strong>Ask {ticks[cursorIndex]?.ask.toLocaleString('pl-PL')}</strong><span>{showTime(ticks[cursorIndex]?.time_msc || 0)}. {String(ticks[cursorIndex]?.time_msc || 0).slice(-3)}</span><label>ŚWIECA<select value={chartInterval} onChange={event => setChartInterval(event.target.value)}>{Object.keys(replayIntervals).map(value => <option key={value}>{value}</option>)}</select></label></div>
-          <ReplayPriceChart ticks={ticks} cursor={cursorIndex} events={events} intervalMs={replayIntervals[chartInterval]} />
-          <input className="fx-replay-timeline" aria-label="Pozycja odtwarzania w całym archiwum" type="range" min="0" max={Math.max(0, (selectedArchive?.tick_count ?? 1) - 1)} value={tickPageOffset + cursorIndex} disabled={loadingTicks || !!pageTransition} onChange={event => {
+</>}
+          </div>
+          {activeJob && workspaceTab !== 'import' && <button className="fx-import-notice" type="button" onClick={()=>setWorkspaceTab('import')}>IMPORT · {job?.symbol} · {job?.progress}% →</button>}
+          {run && workspaceTab !== 'session' && <button className="fx-import-notice" type="button" onClick={()=>setWorkspaceTab('session')}>SYMULACJA · {run.status.toUpperCase()} →</button>}
+        </aside>
+      </div>
+      {ticks.length > 0 && <><footer className="fx-lab-transport" aria-label="Transport replay"><div className="fx-transport-heading"><span className="fx-lab-status">{loadingTicks || pageTransition ? 'WCZYTYWANIE' : playing ? playDirection === 1 ? 'ODTWARZANIE' : 'COFANIE' : 'PAUZA'}</span><time>{showTime(ticks[cursorIndex]?.time_msc || 0)} · {String(ticks[cursorIndex]?.time_msc || 0).slice(-3)} ms</time><span>{(tickPageOffset + cursorIndex + 1).toLocaleString('pl-PL')} / {selectedArchive?.tick_count.toLocaleString('pl-PL')} ticków</span></div>          <input className="fx-replay-timeline" aria-label="Pozycja odtwarzania w całym archiwum" type="range" min="0" max={Math.max(0, (selectedArchive?.tick_count ?? 1) - 1)} value={tickPageOffset + cursorIndex} disabled={loadingTicks || !!pageTransition} onChange={event => {
             const sequence = Number(event.target.value)
             setPlaying(false)
             if (sequence >= tickPageOffset && sequence < tickPageOffset + ticks.length) setCursorIndex(sequence - tickPageOffset)
             else void loadTickPage(selectedArchiveId, Math.max(0, Math.floor(sequence / PAGE_STRIDE) * PAGE_STRIDE - 10_000), sequence)
           }} />
           <div className="fx-replay-player-controls">
-            <button type="button" disabled={loadingTicks || tickPageOffset <= 0} onClick={() => void loadTickPage(selectedArchiveId, Math.max(0, tickPageOffset - PAGE_STRIDE))}>POPRZEDNIA PORCJA</button>
+            <button type="button" disabled={loadingTicks || tickPageOffset <= 0} onClick={() => void loadTickPage(selectedArchiveId, Math.max(0, tickPageOffset - PAGE_STRIDE))}>PORCJA ‹</button>
             <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex <= 0} onClick={() => { setPlaying(false); setCursorIndex(index => Math.max(0, index - 1)) }}>‹ TICK</button>
-            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex <= 0} onClick={() => stepCandle(-1)}>‹ ŚWIECA</button>
-            <button type="button" className="play" disabled={loadingTicks || !!pageTransition || ticks.length < 2} onClick={() => { if (playing && playDirection === 1) setPlaying(false); else { setPlayDirection(1); setPlaying(true) } }}>{playing && playDirection === 1 ? 'PAUZA' : 'ODTWÓRZ ▶'}</button>
+            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex <= 0} onClick={() => stepCandle(-1)} aria-label="Poprzednia świeca">⏮</button>
+            <button type="button" className="play" aria-label={playing && playDirection === 1 ? "Pauza" : "Odtwórz"} disabled={loadingTicks || !!pageTransition || ticks.length < 2} onClick={() => { if (playing && playDirection === 1) setPlaying(false); else { setPlayDirection(1); setPlaying(true) } }}>{playing && playDirection === 1 ? '⏸' : '▶'}</button>
             <button type="button" className="rewind" disabled={loadingTicks || !!pageTransition || ticks.length < 2} onClick={() => { if (playing && playDirection === -1) setPlaying(false); else { setPlayDirection(-1); setPlaying(true) } }}>{playing && playDirection === -1 ? 'PAUZA' : '◀ COFAJ'}</button>
-            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex >= ticks.length - 1} onClick={() => stepCandle(1)}>ŚWIECA ›</button>
+            <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex >= ticks.length - 1} onClick={() => stepCandle(1)} aria-label="Następna świeca">⏭</button>
             <button type="button" disabled={loadingTicks || !!pageTransition || cursorIndex >= ticks.length - 1} onClick={() => { setPlaying(false); setCursorIndex(index => Math.min(ticks.length - 1, index + 1)) }}>TICK ›</button>
-            <button type="button" disabled={loadingTicks || tickPageOffset + ticks.length >= (selectedArchive?.tick_count || 0)} onClick={() => void loadTickPage(selectedArchiveId, tickPageOffset + PAGE_STRIDE, tickPageOffset + ticks.length)}>NASTĘPNA PORCJA</button>
-            <label>TEMPO<select value={playSpeed} onChange={event => setPlaySpeed(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={5}>5×</option><option value={20}>20×</option><option value={100}>100×</option><option value={1000}>1000×</option></select></label>
+            <button type="button" disabled={loadingTicks || tickPageOffset + ticks.length >= (selectedArchive?.tick_count || 0)} onClick={() => void loadTickPage(selectedArchiveId, tickPageOffset + PAGE_STRIDE, tickPageOffset + ticks.length)}>PORCJA ›</button>
+            <label>TEMPO<select value={playSpeed} onChange={event => setPlaySpeed(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={5}>5×</option><option value={10}>10×</option><option value={20}>20×</option><option value={100}>100×</option><option value={1000}>1000×</option></select></label>
           </div>
-          <p className="fx-replay-note">Luna › Tempo odnosi się do rzeczywistego czasu rynku. Suwak obejmuje całe archiwum; sąsiednie fragmenty wczytuję z wyprzedzeniem. Przerwy sesji pozostają w osi czasu. Wyniki zamknięć podaję w punktach brokera.</p>
-        </section> : <section className="fx-replay-player fx-replay-player--empty" aria-label="Okno wizualnego odtwarzania FX Replay">
-          <div className="fx-replay-section-title"><span>00</span> OKNO ODTWARZANIA <small>CRT // FX REPLAY</small></div>
-          <div className="fx-replay-empty-monitor"><div className="fx-replay-empty-monitor__frame"><span>TRYB OFFLINE // GOTOWY</span><strong>WYBIERZ ARCHIWUM</strong><p>Otwórz zapisane ticki z panelu po prawej, aby rozpocząć wizualną powtórkę.</p><i aria-hidden="true">▌</i></div></div>
-          <div className="fx-replay-empty-readout"><span>BID <b>—</b></span><span>ASK <b>—</b></span><span>UTC <b>—</b></span><span>POZYCJA <b>OCZEKUJE</b></span></div>
-        </section>}
-      </div>
+          <p className="fx-replay-note">Tempo = czas rynku. Suwak obejmuje całe archiwum. Przerwy sesji pozostają w osi czasu.</p></footer></>}
     </section>
   </div>
 }

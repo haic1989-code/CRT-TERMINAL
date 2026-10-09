@@ -12,6 +12,8 @@ type Props = {
   clockNow: number
   focus: TerminalFocus
   onFocus: (focus: TerminalFocus) => void
+  onSelectPosition: (position: Mt5Position) => void
+  selectedPositionTicket: number | null
   symbol: string
   alertEvents: { ruleId: string; symbol: string; price: number; firedAt: number }[]
 }
@@ -26,7 +28,7 @@ export function TerminalStatus(p: Props) {
   const orders = p.focus === 'all' ? p.orders.slice(0, 3) : p.orders
   return <><div className={'dragon-terminal-log' + (p.focus !== 'all' ? ' focused' : '')} aria-label="Statusy terminala">
     {(p.feed.status !== 'live' || !p.feed.marketSession?.available) && <p className="negative" role="status" title={p.feed.message}>Luna › {!p.feed.marketSession?.available ? 'Nie odczytuję godzin sesji. Uruchom pomocnik CRTMarketSessions w MT5; do tego czasu zlecenia są zablokowane.' : p.feed.status === 'connecting' ? 'Łączę się z MT5.' : p.feed.status === 'error' ? 'Czekam na połączenie z MT5.' : p.feed.status === 'closed' ? 'Rynek jest zamknięty według godzin sesji symbolu. Pokazuję ostatnie notowania.' : p.feed.status === 'stale' ? 'Sesja jest otwarta, ale nie ma świeżego ticka.' : 'Pokazuję historię notowań.'}</p>}
-    {(p.focus === 'all' || p.focus === 'positions') && positions.map(position => <p key={position.ticket} data-terminal-status="position" className="dragon-position-status"><span className="dragon-position-prefix">&gt; #{position.ticket}</span> · <span className="dragon-position-symbol">{position.symbol}</span> · <span className={position.type === 'buy' ? 'positive' : 'negative'}>{position.type === 'buy' ? 'KUPNO' : 'SPRZEDAŻ'}</span> · <span className={position.profit >= 0 ? 'positive dragon-pnl-value' : 'negative dragon-pnl-value'} key={amount(position.profit)}>P/L {amount(position.profit)} {p.account?.currency || ''}</span></p>)}
+    {(p.focus === 'all' || p.focus === 'positions') && positions.map(position => <button type="button" key={position.ticket} data-terminal-status="position" className="dragon-position-status" aria-label={`Zarządzaj pozycją ${position.symbol} #${position.ticket}`} aria-pressed={p.selectedPositionTicket === position.ticket} onClick={()=>p.onSelectPosition(position)}><span className="dragon-position-prefix">&gt; #{position.ticket}</span> · <span className="dragon-position-symbol">{position.symbol}</span> · <span className={position.type === 'buy' ? 'positive' : 'negative'}>{position.type === 'buy' ? 'KUPNO' : 'SPRZEDAŻ'}</span> · <span className={position.profit >= 0 ? 'positive dragon-pnl-value' : 'negative dragon-pnl-value'} key={amount(position.profit)}>P/L {amount(position.profit)} {p.account?.currency || ''}</span></button>)}
     {p.focus === 'all' && p.positions.length > 4 && <button onClick={() => p.onFocus('positions')}>&gt; +{p.positions.length - 4} POZYCJI / POKAŻ STATUSY</button>}
     {(p.focus === 'all' || p.focus === 'orders') && orders.map(order => <p key={order.ticket} data-terminal-status="order" className="dragon-order-status">&gt; ZLECENIE #{order.ticket} {order.symbol} {orderType(order.type)} {order.volume_initial} LOT @ {order.price_open} · OCZEKUJĄCE{stale(p.ordersObservedAt)}</p>)}
     {p.focus === 'all' && p.orders.length > 3 && <button onClick={() => p.onFocus('orders')}>&gt; +{p.orders.length - 3} ZLECEŃ / POKAŻ STATUSY</button>}
