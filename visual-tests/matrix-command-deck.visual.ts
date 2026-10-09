@@ -157,7 +157,7 @@ async function routeFixture(route: Route) {
     return fulfillJson(route, { source: 'MT5', symbol, timeframe, requested_bars: 5000, loaded_bars: values.length, values, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol), market_session: { available: false, state: 'unknown', quote_open: null, trade_open: null } })
   }
   if (url.pathname === '/v1/snapshot') return fulfillJson(route, { source: 'MT5', symbol, tick: tickFor(symbol), account, symbol_info: symbolInfo(symbol) })
-  if (url.pathname === '/v1/positions') return fulfillJson(route, {
+  if (url.pathname === '/v1/positions' || url.pathname === '/v1/positions/live') return fulfillJson(route, {
     observed_at: Date.now(),
     values: [
       { ticket: 8114021, symbol: 'XAUUSD', type: 'buy', volume: 0.1, price_open: 2764.2, sl: 2744.2, tp: 2802.2, profit: 18.4, swap: -0.4, commission: -0.8, time: Math.floor(Date.now() / 1000) - 3600 },

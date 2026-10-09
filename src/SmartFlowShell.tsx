@@ -16,7 +16,7 @@ import { TerminalStatus, type TerminalFocus } from './TerminalStatus'
 import { INDICATOR_CATALOG } from './indicators/catalog'
 import type { IndicatorId, IndicatorPreferences, IndicatorSettings } from './indicators/catalog'
 import { readIndicatorPreferences, writeIndicatorPreferences } from './indicators/preferences'
-import { fetchMt5Bars, fetchMt5Calculation, fetchMt5ContextBars, fetchMt5FxBars, fetchMt5Orders, fetchMt5Positions, fetchMt5SymbolInfo, fetchMt5Symbols, type Mt5Order, type Mt5Position, type Mt5SymbolInfo } from './mt5Client'
+import { fetchMt5Bars, fetchMt5Calculation, fetchMt5ContextBars, fetchMt5FxBars, fetchMt5Orders, fetchMt5Positions, fetchMt5PositionsLive, fetchMt5SymbolInfo, fetchMt5Symbols, mergeMt5PositionsLive, type Mt5Order, type Mt5Position, type Mt5SymbolInfo } from './mt5Client'
 import type { BreakEvenMode, MarketBar, MarketContextSnapshot, SymbolSpec, TradePlan } from './domain/contracts'
 import { mt5AccountToDomain, mt5OrderToDomain, mt5PositionToDomain, mt5SymbolToDomain } from './adapters/mt5DomainAdapter'
 import { BreakevenEngine, ContextSummaryEngine, CurrencyStrengthEngine, KeyLevelsEngine, MarketProfileEngine, MTFContextEngine, PlannerBreakEvenEngine, PortfolioRiskEngine, PositionSizingEngine, RiskGuardEngine, SessionEngine, planRisk as calculatePlanRisk } from './engines'
@@ -270,6 +270,37 @@ export function SmartFlowShell() {
     const timer = window.setInterval(refresh, 5000)
     return () => { dead = true; window.clearInterval(timer) }
   }, [])
+  useEffect(() => {
+    let dead = false
+    let timer: number | null = null
+    let controller: AbortController | null = null
+    const poll = async () => {
+      const started = performance.now()
+      controller = new AbortController()
+      let failed = false
+      try {
+        const snapshot = await fetchMt5PositionsLive(controller.signal)
+        if (dead) return
+        setPositions(current => mergeMt5PositionsLive(current, snapshot.values))
+        setPositionsObservedAt(snapshot.observed_at)
+      } catch {
+        failed = true
+      } finally {
+        controller = null
+        if (!dead) {
+          const elapsed = performance.now() - started
+          timer = window.setTimeout(poll, failed ? 1000 : Math.max(25, 200 - elapsed))
+        }
+      }
+    }
+    void poll()
+    return () => {
+      dead = true
+      if (timer !== null) window.clearTimeout(timer)
+      controller?.abort()
+    }
+  }, [])
+
   useEffect(() => {
     let dead = false
     setContextBars({})

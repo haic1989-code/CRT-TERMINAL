@@ -101,6 +101,7 @@ export type Mt5MarketSession = {
 }
 
 export type Mt5Position = { ticket: number; symbol: string; type: 'buy' | 'sell'; volume: number; price_open: number; sl: number; tp: number; profit: number; swap: number; commission: number; time: number }
+export type Mt5PositionLive = Omit<Mt5Position, 'commission'>
 export type Mt5Order = { ticket: number; symbol: string; type: string; volume_initial: number; price_open: number; sl: number; tp: number; price_current: number; time_setup: number }
 export type Mt5SymbolItem = Pick<Mt5SymbolInfo, 'symbol' | 'description' | 'path' | 'digits' | 'visible' | 'trade_mode'>
 
@@ -197,10 +198,12 @@ function validateResponse(path: string, payload: unknown): void {
       if (payload.values.some((bar, index, bars) => index > 0 && Number(bar.time) <= Number(bars[index - 1].time))) return fail()
     }
   }
-  if (endpoint === '/v1/positions' || endpoint === '/v1/orders') {
+  if (endpoint === '/v1/positions' || endpoint === '/v1/positions/live' || endpoint === '/v1/orders') {
     if (!numbers(payload, ['observed_at']) || !Array.isArray(payload.values)) return fail()
-    const keys = endpoint === '/v1/positions' ? ['ticket', 'volume', 'price_open', 'sl', 'tp', 'profit'] : ['ticket', 'volume_initial', 'price_open', 'sl', 'tp']
-    if (!payload.values.every(value => object(value) && typeof value.symbol === 'string' && numbers(value, keys))) return fail()
+    const positionEndpoint = endpoint === '/v1/positions' || endpoint === '/v1/positions/live'
+    const keys = positionEndpoint ? ['ticket', 'volume', 'price_open', 'sl', 'tp', 'profit', 'swap', 'time'] : ['ticket', 'volume_initial', 'price_open', 'sl', 'tp']
+    if (!payload.values.every(value => object(value) && typeof value.symbol === 'string' && numbers(value, keys)
+      && (!positionEndpoint || value.type === 'buy' || value.type === 'sell'))) return fail()
   }
   if (endpoint === '/v1/calculate' && !numbers(payload, ['value'])) return fail()
   if (endpoint === '/v1/context-bars' || endpoint === '/v1/fx-bars') {
@@ -240,6 +243,11 @@ export function fetchMt5Snapshot(signal?: AbortSignal, symbol = 'XAUUSD'): Promi
 }
 
 export const fetchMt5Positions = (signal?: AbortSignal) => localFetch<{ observed_at: number; values: Mt5Position[] }>('/v1/positions', signal)
+export const fetchMt5PositionsLive = (signal?: AbortSignal) => localFetch<{ observed_at: number; values: Mt5PositionLive[] }>('/v1/positions/live', signal)
+export function mergeMt5PositionsLive(previous: Mt5Position[], live: Mt5PositionLive[]): Mt5Position[] {
+  const commissions = new Map(previous.map(position => [position.ticket, position.commission]))
+  return live.map(position => ({ ...position, commission: commissions.get(position.ticket) ?? 0 }))
+}
 export const fetchMt5Orders = (signal?: AbortSignal) => localFetch<{ observed_at: number; values: Mt5Order[] }>('/v1/orders', signal)
 export const fetchMt5Symbols = (query = '', signal?: AbortSignal) => localFetch<{ values: Mt5SymbolItem[] }>(`/v1/search-symbols?q=${encodeURIComponent(query)}`, signal)
 export const fetchMt5SymbolInfo = (symbol: string, signal?: AbortSignal) => localFetch<Mt5SymbolInfo>(`/v1/symbol?requested=${encodeURIComponent(symbol)}`, signal)

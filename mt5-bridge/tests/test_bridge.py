@@ -149,6 +149,23 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(bridge.positions()["values"], [])
         history.assert_not_called()
 
+    def test_positions_live_skips_history_and_returns_current_pnl(self):
+        position = types.SimpleNamespace(
+            ticket=7, identifier=71, symbol="XAUUSD.a", type=bridge.mt5.POSITION_TYPE_BUY,
+            volume=0.1, price_open=2300.0, sl=2290.0, tp=2320.0, profit=4.75,
+            swap=-0.1, time=int(time.time()),
+        )
+        with patch.object(bridge, "_ensure_connected"), \
+             patch.object(bridge.mt5, "positions_get", return_value=[position]), \
+             patch.object(bridge.mt5, "history_deals_get") as history:
+            payload = bridge.positions_live()
+
+        history.assert_not_called()
+        self.assertEqual(payload["values"][0]["ticket"], 7)
+        self.assertEqual(payload["values"][0]["profit"], 4.75)
+        self.assertEqual(payload["values"][0]["swap"], -0.1)
+        self.assertNotIn("commission", payload["values"][0])
+
     def test_requested_index_symbol_resolves_to_available_broker_alias(self):
         candidates = {
             "*DJ30*": [types.SimpleNamespace(name="DJ30.cash", currency_profit="USD")],
