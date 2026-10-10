@@ -232,8 +232,11 @@ async function reloadTerminal(page: Page) {
   const mode = await page.locator('.sf-app').evaluate((app) => app.classList.contains('sf-dragon') ? 'dragon' : 'legacy')
   const url = new URL(page.url())
   url.searchParams.set('ui', mode)
+  // Reload checks app state, not the seven-second boot animation. Keep those checks deterministic on CI.
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto(`${url.pathname}${url.search}${url.hash}`)
   await continueThroughStartup(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
 }
 
 async function selectQuickSymbol(page: Page, symbol: string) {
