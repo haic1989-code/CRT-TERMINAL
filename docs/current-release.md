@@ -1,3 +1,13 @@
+# CRT Terminal 0.1.49
+
+- Accepted review v2: right-panel hierarchy 01 Context / 02 Tools / 03 Planner or Manage Position, bounded active-indicator chips and the existing active-tool count.
+- Planner and Manage Position share identical outer geometry at 2560x1440 and 1920x1080. FHD spacing keeps the readout and New Plan control fully visible. Empty Planner space remains available.
+- FX Replay now has three central states: no archive, metadata-only SESSION PREVIEW, and the existing opened chart/transport. The preview shows the actual symbol, broker/server, recorded date range, tick count and manifest source; stored SHA-256 appears only when supplied.
+- Archive selection highlights the complete card. The preview timeline represents metadata date boundaries and does not fetch ticks. Open Replay loads the existing player paused; Start Replay retains existing playback behavior.
+- Trading calculations, execution safety/pipeline, replay engine, archive format and MT5/CSV import semantics are unchanged. Manage Position remains a readout; SL/TP changes and closing stay in MT5.
+- Browser review covered 2560x1440 and 1920x1080. Automated local validation and successful main CI are required before the signed Windows installer and updater manifest are published.
+- Native Windows/MT5 installation and in-app update acceptance remain NOT RUN. Installing an update still requires explicit confirmation in the app.
+
 # CRT Terminal 0.1.48
 
 - Accepted UI sprint: compact market context, one inline tools workspace with Levels / Indicators / Drawing tabs, active-tool count, and a larger transaction Planner. Existing toggle, drawing, reference-level, indicator and lot/target handlers are retained.
