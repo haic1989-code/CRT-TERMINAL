@@ -288,3 +288,16 @@
 .sf-matrix .dragon-terminal-log button.dragon-position-status{display:block;font:inherit;text-align:left;border:0;border-left:2px solid transparent;background:none;color:inherit;padding:2px 5px;margin:0;cursor:pointer;}
 .sf-matrix .dragon-terminal-log button.dragon-position-status:hover,.sf-matrix .dragon-terminal-log button.dragon-position-status[aria-pressed=true]{border-left-color:#88e6bc;background:#88e6bc0c;}
 .sf-matrix .dragon-terminal-log button.dragon-position-status:focus-visible{outline:1px solid #88e6bc;outline-offset:3px;}
+
+/* Review: numbered tools and bounded active-indicator summary. */
+.sf-matrix .matrix-command-deck .deck-tools-toggle .idx{font-size:11px;color:var(--dim);}
+.sf-matrix .matrix-command-deck .deck-tools-count{font-size:11px;padding:3px 7px;border:1px solid #79ecaa33;line-height:1.5;}
+.sf-matrix .matrix-command-deck .deck-tools-chips{display:flex;gap:6px;padding:8px 12px 0;min-width:0;}
+.sf-matrix .matrix-command-deck .deck-indicator-chip{font-size:10px;line-height:1.5;padding:2px 7px;max-width:11ch;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid #9debd133;background:#9debd109;color:var(--cyan);}
+.sf-matrix .matrix-command-deck .deck-chip-more{flex-shrink:0;color:var(--dim);}
+
+/* Stable outer geometry; extended planning controls scroll inside the shared block. */
+@media(min-width:1601px){.sf-matrix .sf-right-column.matrix-text-column>.matrix-command-deck{height:100%;}}
+.sf-matrix .matrix-command-deck .deck-planner{overflow:auto;scrollbar-width:thin;scrollbar-color:#52799a77 transparent;}
+
+@media(max-height:1100px){.sf-matrix .matrix-command-deck .deck-managed-pnl{padding:16px 0;}.sf-matrix .matrix-command-deck .deck-management-note{margin:10px 0;}.sf-matrix .matrix-command-deck .deck-manage .deck-plan-readout{row-gap:18px;}}

@@ -75,6 +75,13 @@ export function MatrixCommandDeck(p: Props) {
   const [toolsTab, setToolsTab] = useState<'levels' | 'indicators' | 'drawing'>('levels')
   const visibleIndicators = p.indicators.filter(id => p.settings[id]?.visible !== false).length + Number(p.profile) + Number(p.volume)
   const activeTools = p.activeLevels.length + visibleIndicators + Number(Boolean(p.drawing))
+  const activeIndicatorNames = [
+    ...INDICATOR_CATALOG.filter(({id})=>p.indicators.includes(id)&&p.settings[id]?.visible!==false).map(({id,defaultPeriod})=>{
+      const label = id === 'Bollinger Bands' ? 'BB' : id.split(' ')[0]
+      return defaultPeriod === undefined ? label : label + ' ' + (p.settings[id]?.period ?? defaultPeriod)
+    }),
+    ...(p.profile ? ['Profil'] : []), ...(p.volume ? ['Tick Vol.'] : []),
+  ]
   const [previewUntil,setPreviewUntil] = useState(0)
   const quoteLight = useRef<HTMLSpanElement>(null), previousQuote = useRef(p.quoteSample)
   const [bootMotionDone,setBootMotionDone] = useState(false)
@@ -139,9 +146,10 @@ export function MatrixCommandDeck(p: Props) {
       <span ref={quoteLight} className="deck-quote-pulse">{previewUntil ? 'PODGLĄD ANIMACJI · BEZ ZMIANY DANYCH' : 'BID / ASK · IMPULS PRZY ZMIANIE CENY'}</span><section className="deck-context"><Heading index="01">KONTEKST RYNKOWY</Heading><div className="pair-grid">{contexts.map((tf,index)=>{const trend=p.directions[tf]||'unavailable';return <button className="item context-item" key={tf} aria-label={`Kontekst ${tf}: ${trend==='bullish'?'wzrostowy':trend==='bearish'?'spadkowy':trend==='unavailable'?'brak danych':'neutralny'}`} aria-pressed={p.contextTimeframe===tf} onClick={()=>act(()=>p.onContext(tf))}><Text className={p.contextTimeframe===tf?'active':''}>{tf}</Text><DirectionBar trend={trend} sample={`${p.symbol}|${p.contextSnapshots[tf] ?? 'null'}`} active={motionActive && (appearance.dynamics || Boolean(previewUntil))} updatesActive={motionActive && p.contextLive} phase={index}/><Text className={trend==='bullish'?'positive':trend==='bearish'?'negative':'dim'}>{trend==='bullish'?'wzrostowy':trend==='bearish'?'spadkowy':trend==='unavailable'?'brak danych':'neutralny'}</Text></button>})}</div><div className="subline"><Text className="dim">{p.symbol} · {polishContext(p.session)}</Text></div><div className="subline"><Text className="dim">Światło pasków: {motionActive && appearance.dynamics ? 'aktywne' : 'wyłączone'} · ruch dekoracyjny</Text></div></section>
       <section className="deck-toolbox" aria-label="Narzędzia rynku">
         <button type="button" className="deck-tools-toggle" aria-expanded={toolsOpen} aria-controls="deck-tools-panel" onClick={()=>act(()=>setToolsOpen(value=>!value))}>
-          <span><Text>NARZĘDZIA ·</Text><span className="deck-tools-count">{activeTools} AKTYWNE</span></span><span aria-hidden="true">{toolsOpen ? '⌃' : '⌄'}</span>
+          <span><Text className="idx">02</Text><Text>NARZĘDZIA ·</Text><span className="deck-tools-count">{activeTools} AKTYWNE</span></span><span aria-hidden="true">{toolsOpen ? '⌃' : '⌄'}</span>
         </button>
         {activeTools > 0 && <div className="deck-tools-summary">{p.activeLevels.length > 0 && <span>POZIOMY {p.activeLevels.length}</span>}{visibleIndicators > 0 && <span>WSKAŹNIKI {visibleIndicators}</span>}{p.drawing && <span>{tools.find(tool=>tool.id===p.drawing)?.label ?? p.drawing} · aktywne</span>}</div>}
+        {!toolsOpen && activeIndicatorNames.length > 0 && <div className="deck-tools-chips" aria-label="Aktywne wskaźniki" title={activeIndicatorNames.join(' · ')}>{activeIndicatorNames.slice(0,3).map(name=><span className="deck-indicator-chip" key={name} title={name}>{name}</span>)}{activeIndicatorNames.length > 3 && <span className="deck-indicator-chip deck-chip-more">+{activeIndicatorNames.length - 3}</span>}</div>}
         {toolsOpen && <div id="deck-tools-panel" className="deck-tools-panel">
           <div role="tablist" aria-label="Kategorie narzędzi" className="deck-tools-tabs">{([['levels','POZIOMY'],['indicators','WSKAŹNIKI'],['drawing','RYSOWANIE']] as const).map(([id,label])=><button type="button" role="tab" key={id} id={'deck-tab-'+id} aria-selected={toolsTab===id} aria-controls={'deck-panel-'+id} tabIndex={toolsTab===id ? 0 : -1} onKeyDown={event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const ids=['levels','indicators','drawing'] as const;const index=event.key==='Home'?0:event.key==='End'?2:(ids.indexOf(toolsTab)+(event.key==='ArrowRight'?1:2))%3;setToolsTab(ids[index]);document.getElementById('deck-tab-'+ids[index])?.focus()}} onClick={()=>act(()=>setToolsTab(id))}>{label}</button>)}</div>
           <div role="tabpanel" id={'deck-panel-'+toolsTab} aria-labelledby={'deck-tab-'+toolsTab} className="deck-tools-body">
